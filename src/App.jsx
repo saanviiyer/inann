@@ -3,10 +3,16 @@ import Scene from './components/Scene.jsx';
 import Prologue from './components/Prologue.jsx';
 import DrawPad from './components/DrawPad.jsx';
 import Inspector from './components/Inspector.jsx';
+import FeatureRoom from './components/FeatureRoom.jsx';
+import SearchBar from './components/SearchBar.jsx';
+import SteerPanel from './components/SteerPanel.jsx';
+import SaePanel from './components/SaePanel.jsx';
+import { LatentScene, LatentPanel } from './components/Latent.jsx';
 import { FeatureVis, Patches, Neighborhood } from './components/SeePanel.jsx';
 import { Adversarial, Occlusion, occlude } from './components/BreakPanel.jsx';
 import { Term, Cite, NotShown, Btn, Kbd, Sources, Boundary } from './components/ui.jsx';
-import { net, META, DIGITS, LABELS, describe } from './lib/model.js';
+import { net, sae, META, DIGITS, LABELS, describe, roomOf, roomName, bestUnitInRoom } from './lib/model.js';
+import { topExamples } from './lib/rooms.js';
 import { forward, receptiveField, strongestPath } from './lib/net.js';
 import { topPatches } from './lib/analysis.js';
 
@@ -15,12 +21,20 @@ const CHAPTERS = [
   { n: 2, name: 'Inside the network' },
   { n: 3, name: 'What neurons see' },
   { n: 4, name: 'Break it' },
+  { n: 5, name: 'Feature rooms' },
+  { n: 6, name: 'Steer it' },
+  { n: 7, name: 'Neurons vs features' },
+  { n: 8, name: 'Latent space' },
 ];
 
 const INTRO = {
   2: <>This is a real trained network laid out as rooms, with the input at the bottom and the answer at the top; draw a digit and watch the light climb.</>,
   3: <>Pick a neuron and ask it what it responds to.</>,
   4: <>Now change the input on purpose and watch the flow reroute.</>,
+  5: <>Every unit has a room that shows what it responds to, how often, and a box where you can test it yourself.</>,
+  6: <>Grab a unit, fix its value, and watch the answer change.</>,
+  7: <>Swap the 32 dense neurons for 256 sparse features and compare how single-minded each one is.</>,
+  8: <>Every digit becomes a point in each layer's space; see where yours lands and who its neighbours are.</>,
 };
 
 const TAKEAWAY = {
@@ -41,6 +55,26 @@ const TAKEAWAY = {
       Small input changes can redirect the whole internal flow. Occlusion shows which parts of the input a decision actually depends on.
     </>
   ),
+  5: (
+    <>
+      A unit's top examples and its histogram together say what it does and how often it does it. A written explanation is only as good as its simulation score, so read the badge before you trust the sentence.
+    </>
+  ),
+  6: (
+    <>
+      Fixing a unit and watching the output move shows that the unit causes the change, which watching activations alone cannot. A good demo moves one kind of digit and not every digit, so read the counts under each preset.
+    </>
+  ),
+  7: (
+    <>
+      Sparse features give up a little accuracy for units that are usually easier to name. Whether a given feature is clean is a measurement shown in its room, not a promise.
+    </>
+  ),
+  8: (
+    <>
+      A layer's space is where the network does its work, and distances there show which inputs it treats as alike. A 3D picture of that space always hides most of it, so trust the full-space numbers over the picture.
+    </>
+  ),
 };
 
 const firstSeven = DIGITS[LABELS.indexOf(7)];
@@ -59,6 +93,12 @@ export default function App() {
   const [fv, setFv] = useState(null);
   const [sources, setSources] = useState(false);
   const paused = useRef(false);
+  const [mode, setModeRaw] = useState('neurons');
+  const [clamp, setClamp] = useState(null);
+  const [flyTo, setFlyTo] = useState(null);
+  const [latentLayer, setLatentLayer] = useState('dense');
+  const [highlight, setHighlight] = useState(null);
+  const [trail, setTrail] = useState([]);
   const [entered, setEntered] = useState(false); // mount the 3D space the first time it is needed, then keep it
   useEffect(() => { if (chapter > 1) setEntered(true); }, [chapter]);
 
@@ -68,9 +108,16 @@ export default function App() {
   }, []);
 
   const xe = useMemo(() => (chapter === 4 ? occlude(x, occ) : x), [x, occ, chapter]);
-  const f = useMemo(() => forward(net, xe), [xe]);
+  const fBase = useMemo(() => forward(net, xe, { sae }), [xe]);
+  const f = useMemo(() => (clamp ? forward(net, xe, { sae, clamp }) : fBase), [xe, clamp, fBase]);
   const stamp = f; // a new forward pass starts a new wave
-  const path = useMemo(() => strongestPath(net, f), [f]);
+  // in the rooms chapter, the current runs from the input to the selected unit ("test this neuron")
+  const pulseTo = chapter === 5 && selected && selected.layer !== 'input' ? selected : null;
+  const path = useMemo(() => strongestPath(net, f, pulseTo, mode === 'features' ? sae : null), [f, pulseTo, mode]);
+  const ring = useMemo(() => {
+    if (chapter < 5 || chapter > 7 || !selected || selected.layer === 'input' || selected.layer === 'out') return null;
+    return topExamples(roomOf(selected.layer, selected.index), 12).map((t) => ({ values: t.img, caption: `${t.label} · ${t.act.toFixed(1)}` }));
+  }, [chapter, selected]);
   const rfMask = useMemo(() => (selected ? receptiveField(selected.layer, selected.index) : null), [selected]);
   const patches = useMemo(() => {
     if (chapter !== 3 || !selected || !['conv1', 'conv2', 'dense'].includes(selected.layer)) return null;
@@ -78,10 +125,33 @@ export default function App() {
   }, [chapter, selected]);
 
   const onSelect = useCallback((s) => setSelected(s), []);
+  const setMode = useCallback((m) => {
+    setModeRaw(m);
+    setSelected((s) => (s && ((m === 'features' && s.layer === 'dense') || (m === 'neurons' && s.layer === 'sae')) ? null : s));
+  }, []);
+  // open a room from search, a preset or the SAE panel: switch mode if needed, select, and fly there
+  const openRoom = useCallback((room, acts) => {
+    if (room.layer === 'sae') setModeRaw('features');
+    if (room.layer === 'dense') setModeRaw('neurons');
+    const unit = room.channel ? bestUnitInRoom(acts, room) : room.index;
+    const s = { layer: room.layer, index: unit };
+    setSelected(s);
+    setFlyTo({ ...s, nonce: Math.random() });
+  }, []);
+  const onSearchPick = useCallback((r) => {
+    if (chapter < 2 || chapter === 8) setChapter(5);
+    openRoom(r.room, f.acts);
+  }, [chapter, f, openRoom]);
+  const onPreset = useCallback((p, c, i) => {
+    const xi = i >= 0 ? DIGITS[i] : x;
+    if (i >= 0) setX(DIGITS[i], 'preset');
+    setClamp(c);
+    openRoom({ layer: p.layer, index: p.index, channel: p.scope === 'channel' }, forward(net, xi, { sae }).acts);
+  }, [x, setX, openRoom]);
   const onHover = useCallback((h) => setHover(h), []);
   const onFvFrame = useCallback((v) => setFv(v), []);
 
-  useEffect(() => { if (chapter !== 3) setFv(null); if (chapter === 1) setFollow(false); }, [chapter]);
+  useEffect(() => { if (chapter !== 3) setFv(null); if (chapter === 1 || chapter === 8) setFollow(false); }, [chapter]);
 
   useEffect(() => {
     const key = (e) => {
@@ -91,7 +161,7 @@ export default function App() {
         paused.current = !paused.current;
         setPausedUI(paused.current);
       } else if (e.key === 'f' || e.key === 'F') {
-        if (chapter > 1) setFollow((v) => !v);
+        if (chapter > 1 && chapter < 8) setFollow((v) => !v);
       }
     };
     window.addEventListener('keydown', key);
@@ -117,9 +187,27 @@ export default function App() {
         </nav>
         <div className="ml-auto flex items-center gap-3 text-[11px] text-dim">
           <span><Kbd>space</Kbd> {pausedUI ? 'resume' : 'pause'}</span>
-          {chapter > 1 && <span><Kbd>F</Kbd> follow the signal</span>}
+          {chapter > 1 && chapter < 8 && <span><Kbd>F</Kbd> follow the signal</span>}
           <button onClick={() => setSources(true)} className="text-glow/80 hover:text-glow">Sources</button>
         </div>
+        {chapter > 1 && (
+          <div className="flex w-full flex-wrap items-center gap-2">
+            <SearchBar onPick={onSearchPick} />
+            <div className="flex overflow-hidden rounded-md border border-line text-xs" title="show raw dense neurons, or the sparse autoencoder's features in their place">
+              {['neurons', 'features'].map((m) => (
+                <button key={m} onClick={() => setMode(m)} className={`px-2.5 py-1 ${mode === m ? 'bg-glow/15 text-glow' : 'text-dim hover:text-slate-200'}`}>
+                  {m === 'neurons' ? 'Neurons' : 'Features'}
+                </button>
+              ))}
+            </div>
+            {clamp && (
+              <span className="flex items-center gap-1.5 rounded-md border border-warm/50 bg-warm/10 px-2 py-1 text-xs text-warm">
+                Clamped: {roomName({ layer: clamp.layer, index: clamp.index, channel: clamp.scope === 'channel' })} = {clamp.value.toFixed(2)}
+                <button onClick={() => setClamp(null)} className="text-slate-200 hover:text-white" title="release the clamp">release</button>
+              </span>
+            )}
+          </div>
+        )}
       </header>
 
       {chapter === 1 && (
@@ -153,12 +241,12 @@ export default function App() {
               ))}
             </div>
           </div>
-          <div className="flex flex-wrap gap-1.5">
+          {chapter < 8 && <div className="flex flex-wrap gap-1.5">
             <Btn on={xray} onClick={() => setXray((v) => !v)} title="spread the layers apart, or stack them tightly">X-ray {xray ? 'on' : 'off'}</Btn>
             <Btn on={follow} onClick={() => setFollow((v) => !v)}>Follow the signal</Btn>
             <Btn on={showPath} onClick={() => setShowPath((v) => !v)}>Show strongest path</Btn>
             <Btn on={pausedUI} onClick={() => { paused.current = !paused.current; setPausedUI(paused.current); }}>{pausedUI ? 'Paused' : 'Pause'}</Btn>
-          </div>
+          </div>}
           {chapter === 2 && (
             <div className="space-y-2 text-xs leading-relaxed text-slate-400">
               <p>
@@ -179,7 +267,7 @@ export default function App() {
             </div>
           )}
           <div className="rounded-lg border border-glow/20 bg-glow/5 p-3 text-xs leading-relaxed text-slate-200">{TAKEAWAY[chapter]}</div>
-          {chapter === 4 && (
+          {chapter === 8 && (
             <div className="rounded-lg border border-line p-3 text-xs text-slate-400">
               <span className="text-[10px] uppercase tracking-[0.2em] text-dim">Coming next</span>
               <p className="mt-1 text-slate-300">Transformers, where each word uses attention to choose which other words to read from.<Cite id="vaswani2017" /></p>
@@ -189,8 +277,17 @@ export default function App() {
 
         {/* center: the space */}
         <section className="relative order-1 h-[60vh] min-w-0 shrink-0 overflow-hidden lg:order-2 lg:h-auto lg:flex-1 lg:shrink">
+          {chapter === 8 && (
+            <div className="absolute inset-0 z-10">
+              <LatentScene layer={latentLayer} f={f} highlight={highlight} trail={trail} onPick={(i) => setX(DIGITS[i], 'sample')} />
+            </div>
+          )}
+          <div className={`absolute inset-0 ${chapter === 8 ? 'invisible' : ''}`}>
           {entered && <Scene
-            active={chapter > 1}
+            active={chapter > 1 && chapter < 8}
+            mode={mode}
+            flyTo={flyTo}
+            ring={ring}
             f={f}
             stamp={stamp}
             selected={selected}
@@ -203,13 +300,16 @@ export default function App() {
             rfMask={rfMask}
             fv={chapter === 3 ? fv : null}
             patches={patches}
-            showPath={showPath}
+            showPath={showPath || !!pulseTo}
           />}
+          </div>
           <div className="pointer-events-none absolute bottom-3 left-3 rounded bg-black/50 px-2 py-1 text-[11px] text-slate-300">
             {hoverInfo ? (
               <>
                 {hoverInfo.title}: <span className="text-glow">{hoverInfo.layer === 'out' ? `${(hoverInfo.a * 100).toFixed(1)}%` : hoverInfo.a.toFixed(3)}</span>
               </>
+            ) : chapter === 8 ? (
+              <>Drag to orbit, scroll to zoom, click a numeral to load that digit.</>
             ) : follow ? (
               <>Following the strongest contributions from input to answer. <Kbd>F</Kbd> to stop.</>
             ) : (
@@ -221,7 +321,11 @@ export default function App() {
 
         {/* right: inspector and chapter tools */}
         <aside className="scroll-thin order-3 w-full shrink-0 space-y-3 border-line p-4 lg:overflow-y-auto lg:w-[22rem] lg:shrink-0 lg:border-l">
-          <Boundary key={`bi-${selected?.layer}-${selected?.index}`}><Inspector sel={selected} f={f} rfMask={rfMask} onClear={() => setSelected(null)} /></Boundary>
+          {chapter < 8 && (
+            <Boundary key={`bi-${selected?.layer}-${selected?.index}`}>
+              <FeatureRoom sel={selected} f={f} fBase={fBase} setX={setX} clamp={clamp} setClamp={setClamp} rfMask={rfMask} onClear={() => setSelected(null)} />
+            </Boundary>
+          )}
           {chapter === 3 && (
             <Boundary>
               <FeatureVis sel={selected} f={f} paused={paused} onFrame={onFvFrame} />
@@ -235,8 +339,18 @@ export default function App() {
               <Occlusion x={x} occ={occ} setOcc={setOcc} />
             </Boundary>
           )}
+          {chapter === 6 && <Boundary><SteerPanel onRun={onPreset} clamp={clamp} /></Boundary>}
+          {chapter === 7 && <Boundary><SaePanel onOpen={(room) => openRoom(room, f.acts)} /></Boundary>}
+          {chapter === 8 && (
+            <Boundary>
+              <LatentPanel layer={latentLayer} setLayer={setLatentLayer} f={f} highlight={highlight} setHighlight={setHighlight} setX={setX} setTrail={setTrail} />
+            </Boundary>
+          )}
         </aside>
       </main>
+      <footer className="border-t border-line px-4 py-1.5 text-[10px] text-dim">
+        Feature rooms, test-this-neuron, explanation search and steering follow Neuronpedia<Cite id="lin2023" />; explanations follow Bills et al.<Cite id="bills2023" />. Everything runs in your browser from precomputed files.
+      </footer>
       {sources && <Sources onClose={() => setSources(false)} />}
     </div>
   );

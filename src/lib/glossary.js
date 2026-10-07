@@ -29,4 +29,13 @@ export const GLOSSARY = {
   occlusion: 'Covering part of the input to see how the model reacts.',
   MDS: 'Multidimensional scaling: placing points on a flat map so their distances match given dissimilarities.',
   'pre-activation': 'The weighted sum inside a neuron before ReLU zeroes out negatives.',
+  'sparse autoencoder': 'A small network trained to rewrite activations as a few active parts out of many, so each part is easier to read.',
+  'SAE feature': 'One of those parts: a direction in the neurons that is either on or off for a given input.',
+  clamp: 'Forcing a unit to a value you choose while the input runs through, to see what that unit causes.',
+  selectivity: 'How much a clamp moves one kind of digit compared with how much it moves every other digit the same way.',
+  'simulation score': 'How well someone could predict this unit from the sentence alone, measured as a correlation from -1 to 1.',
+  PCA: 'Principal component analysis: rotating the data so the first few directions keep as much of its spread as possible.',
+  'nearest neighbours': 'The held-out digits whose representation in this layer is closest to a given one.',
+  'separation ratio': 'Average distance between different digits divided by how spread out each digit is; higher means tighter, more separate groups.',
+  'latent space': 'The space of a layer\'s activations, where every input becomes one point.',
 };

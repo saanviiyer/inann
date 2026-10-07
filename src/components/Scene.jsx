@@ -2,15 +2,17 @@ import React, { useEffect, useMemo, useRef } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls, Html, Billboard } from '@react-three/drei';
 import * as THREE from 'three';
-import { LAYERS, incoming, resolveSource } from '../lib/net.js';
-import { net, SCALE, layerSize } from '../lib/model.js';
+import { LAYERS, ORDER_NEURONS, ORDER_FEATURES, incoming, resolveSource } from '../lib/net.js';
+import { net, sae, SCALE, layerSize } from '../lib/model.js';
+import { featureLogitEffect } from '../lib/sae.js';
 import { cmap } from './ui.jsx';
 
 // ---------- layout: every neuron gets a fixed spot inside its layer's room ----------
-const ORDER = LAYERS.map((l) => l.key);
+// SAE features take the dense room's slot in the stack when feature mode is on
+const SLOT = { input: 0, conv1: 1, conv2: 2, dense: 3, sae: 3, out: 4 };
 const BASE = {}; // layer -> Float32Array(n*3) local positions
-const SIZE = { input: 0.27, conv1: 0.17, conv2: 0.2, dense: 0.12, out: 0.3 };
-const FLOOR = { input: [3.2, 3.2], conv1: [7.2, 4.6], conv2: [5.8, 4.4], dense: [5.4, 5.4], out: [8.6, 1.4] };
+const SIZE = { input: 0.27, conv1: 0.17, conv2: 0.2, dense: 0.12, sae: 0.075, out: 0.3 };
+const FLOOR = { input: [3.2, 3.2], conv1: [7.2, 4.6], conv2: [5.8, 4.4], dense: [5.4, 5.4], sae: [7, 7], out: [8.6, 1.4] };
 (function buildLayout() {
   const put = (key, n, fn) => {
     const a = new Float32Array(n * 3);
@@ -30,10 +32,14 @@ const FLOOR = { input: [3.2, 3.2], conv1: [7.2, 4.6], conv2: [5.8, 4.4], dense: 
     const r = 2.3 * Math.sqrt((i + 0.5) / 32), t = i * 2.39996;
     return [r * Math.cos(t), 0.28 * Math.sin(i * 1.7), r * Math.sin(t)];
   });
+  put('sae', 256, (i) => {
+    const r = 3.3 * Math.sqrt((i + 0.5) / 256), t = i * 2.39996;
+    return [r * Math.cos(t), 0.2 * Math.sin(i * 1.3), r * Math.sin(t)];
+  });
   put('out', 10, (d) => [(d - 4.5) * 0.8, 0, 0]);
 })();
 
-export const layerY = (key, gap) => ORDER.indexOf(key) * gap;
+export const layerY = (key, gap) => SLOT[key] * gap;
 const gapFor = (xray) => (xray ? 3.1 : 0.75);
 export function worldPos(key, i, gap, v = new THREE.Vector3()) {
   const b = BASE[key];
@@ -75,7 +81,7 @@ function Layer({ k, target, live, rfMask, pred, onSelect, onHover, gapRef, pause
   useEffect(() => {
     from.set(disp);
     const a = anim.current;
-    a.start = a.t + ORDER.indexOf(k) * 0.11;
+    a.start = a.t + SLOT[k] * 0.11;
     a.active = true;
   }, [stamp, k, from, disp]);
   useEffect(() => { anim.current.active = true; }, [rfMask, pred, live]);
@@ -118,7 +124,7 @@ function Layer({ k, target, live, rfMask, pred, onSelect, onHover, gapRef, pause
         <planeGeometry args={FLOOR[k]} />
         <meshBasicMaterial color="#0d1424" transparent opacity={0.35} side={THREE.DoubleSide} depthWrite={false} />
       </mesh>
-      <Html position={[k === 'conv1' ? -4.4 : k === 'out' ? -4.9 : -3.9, 0, 0]} center style={{ pointerEvents: 'none' }}>
+      <Html position={[k === 'conv1' ? -4.4 : k === 'out' ? -4.9 : k === 'sae' ? -4.6 : -3.9, 0, 0]} center style={{ pointerEvents: 'none' }}>
         <div className="whitespace-nowrap text-[11px] uppercase tracking-[0.18em] text-dim">{label}</div>
       </Html>
       {k === 'out' &&
@@ -132,14 +138,26 @@ function Layer({ k, target, live, rfMask, pred, onSelect, onHover, gapRef, pause
 }
 
 // ---------- incoming weights of the selected neuron, as glowing lines ----------
-function Edges({ selected, f, gapRef }) {
+// In feature mode an SAE feature shows its outgoing effect on each digit's score
+// (W_out . decoder direction), since the dense neurons it reads from are not drawn.
+function Edges({ selected, f, gapRef, mode }) {
   const geo = useMemo(() => new THREE.BufferGeometry(), []);
   const data = useMemo(() => {
     if (!selected || selected.layer === 'input') return null;
-    const inc = incoming(net, selected.layer, selected.index);
+    let inc;
+    if (selected.layer === 'sae') {
+      const e = featureLogitEffect(net, sae, selected.index);
+      inc = Array.from(e, (w, d) => ({ layer: 'out', index: d, w }));
+    } else if (selected.layer === 'out' && mode === 'features') {
+      inc = [];
+      for (let fi = 0; fi < sae.F; fi++) inc.push({ layer: 'sae', index: fi, w: featureLogitEffect(net, sae, fi)[selected.index] });
+      inc = inc.sort((a, b) => Math.abs(b.w) - Math.abs(a.w)).slice(0, 24);
+    } else {
+      inc = incoming(net, selected.layer, selected.index).map((s) => ({ layer: s.layer, index: resolveSource(f, s), w: s.w }));
+    }
     const m = Math.max(...inc.map((s) => Math.abs(s.w))) || 1;
-    return inc.map((s) => ({ layer: s.layer, index: resolveSource(f, s), w: s.w / m }));
-  }, [selected, f]);
+    return inc.map((s) => ({ ...s, w: s.w / m }));
+  }, [selected, f, mode]);
   const v1 = useMemo(() => new THREE.Vector3(), []);
   const v2 = useMemo(() => new THREE.Vector3(), []);
   const ys = useRef({});
@@ -208,9 +226,11 @@ function SignalPath({ path, gapRef, show }) {
     line.setAttribute('position', new THREE.BufferAttribute(new Float32Array(path.length * 3), 3));
   }, [path, line]);
   useFrame(({ clock }) => {
-    if (!show) return;
+    if (!show || path.length < 2) return;
     g.current += (gapRef.current - g.current) * 0.18;
     path.forEach((p, i) => worldPos(p.layer, p.index, g.current, pts[i]));
+    if (!line.attributes.position || line.attributes.position.count !== pts.length)
+      line.setAttribute('position', new THREE.BufferAttribute(new Float32Array(pts.length * 3), 3));
     const arr = line.attributes.position.array;
     pts.forEach((p, i) => arr.set([p.x, p.y, p.z], i * 3));
     line.attributes.position.needsUpdate = true;
@@ -238,7 +258,7 @@ function SignalPath({ path, gapRef, show }) {
 }
 
 // ---------- camera: orbit, WASD fly, and follow-the-signal ----------
-function CameraRig({ follow, path, gapRef, paused, controls, xrayKey }) {
+function CameraRig({ follow, path, gapRef, paused, controls, xrayKey, flyTo }) {
   const { camera } = useThree();
   const keys = useRef({});
   const u = useRef(0);
@@ -268,6 +288,14 @@ function CameraRig({ follow, path, gapRef, paused, controls, xrayKey }) {
     controls.current.update();
   };
   const framedFor = useRef('');
+  // fly to a unit picked by search: ease the orbit target onto it and the camera to a close view
+  const fly = useRef(null);
+  useEffect(() => {
+    if (!flyTo || !controls.current) return;
+    const p = worldPos(flyTo.layer, flyTo.index, gapRef.current);
+    const dir = camera.position.clone().sub(controls.current.target).normalize();
+    fly.current = { t: 0, fromCam: camera.position.clone(), fromTgt: controls.current.target.clone(), toTgt: p, toCam: p.clone().addScaledVector(dir, 10) };
+  }, [flyTo]); // eslint-disable-line
   useEffect(() => { u.current = 0; }, [follow]);
   useEffect(() => {
     if (!follow && controls.current) { controls.current.target.copy(look); controls.current.update(); }
@@ -277,7 +305,18 @@ function CameraRig({ follow, path, gapRef, paused, controls, xrayKey }) {
     dt = Math.min(dt, 0.05);
     const fk = `${size.width}x${size.height}:${xrayKey}`;
     if (framedFor.current !== fk && controls.current && !follow) { framedFor.current = fk; frame(); }
-    if (follow) {
+    if (fly.current && controls.current && !follow) {
+      const F = fly.current;
+      F.t = Math.min(1, F.t + dt / 1.4);
+      const e = F.t < 0.5 ? 2 * F.t * F.t : 1 - (-2 * F.t + 2) ** 2 / 2;
+      camera.position.lerpVectors(F.fromCam, F.toCam, e);
+      controls.current.target.lerpVectors(F.fromTgt, F.toTgt, e);
+      controls.current.update();
+      if (F.t >= 1) fly.current = null;
+      look.copy(controls.current.target);
+      return;
+    }
+    if (follow && path.length >= 2) {
       if (!paused.current) u.current = Math.min(1.25, u.current + dt / 9);
       path.forEach((p, i) => worldPos(p.layer, p.index, gapRef.current, pts[i]));
       const curve = new THREE.CatmullRomCurve3(pts, false, 'centripetal');
@@ -370,7 +409,7 @@ function FloatImage({ values, w = 8, h = 8, map = 'gray', position, size = 1.2, 
   );
 }
 
-function Floating({ selected, gapRef, fv, patches }) {
+function Floating({ selected, gapRef, fv, patches, ring }) {
   const grp = useRef();
   const v = useMemo(() => new THREE.Vector3(), []);
   const g = useRef(gapRef.current);
@@ -384,6 +423,15 @@ function Floating({ selected, gapRef, fv, patches }) {
   return (
     <group ref={grp}>
       {/* one camera-facing card, so the row never overlaps itself from an angle */}
+      {/* a room's top examples, as cards in a ring around the unit */}
+      {ring?.map((c, i) => {
+        const t = (i / ring.length) * Math.PI * 2;
+        return (
+          <Billboard key={i} position={[1.9 * Math.cos(t), 0.55, 1.9 * Math.sin(t)]}>
+            <FloatImage values={c.values} position={[0, 0, 0]} size={0.6} caption={c.caption} />
+          </Billboard>
+        );
+      })}
       <Billboard>
         {fv && <FloatImage values={fv.values} map="gray" position={[patches ? 3.3 : 1.6, 0.5, 0]} size={1.3} caption={fv.caption} />}
         {patches?.map((p, i) => (
@@ -395,10 +443,14 @@ function Floating({ selected, gapRef, fv, patches }) {
 }
 
 function Scene(props) {
-  const { f, stamp, selected, onSelect, onHover, xray, follow, paused, path, rfMask, fv, patches, showPath, active } = props;
+  const { f, stamp, selected, onSelect, onHover, xray, follow, paused, path, rfMask, fv, patches, ring, showPath, active, mode, flyTo } = props;
   const gapRef = useRef(gapFor(xray));
   gapRef.current = gapFor(xray);
   const controls = useRef();
+  const order = mode === 'features' ? ORDER_FEATURES : ORDER_NEURONS;
+  // a path may pass through a room that is not drawn in this mode (the dense neurons behind an SAE feature)
+  const shownPath = useMemo(() => path.filter((p) => order.includes(p.layer)), [path, order]);
+  const sel = selected && order.includes(selected.layer) ? selected : null;
   return (
     <Canvas
       frameloop={active ? 'always' : 'demand'}
@@ -409,7 +461,7 @@ function Scene(props) {
       <color attach="background" args={['#05070d']} />
       <fog attach="fog" args={['#05070d', 28, 70]} />
       <Stars />
-      {ORDER.map((k) => (
+      {order.map((k) => (
         <Layer
           key={k}
           k={k}
@@ -424,12 +476,12 @@ function Scene(props) {
           paused={paused}
         />
       ))}
-      <Edges selected={selected} f={f} gapRef={gapRef} />
-      <SelectionMarker selected={selected} gapRef={gapRef} />
-      <SignalPath path={path} gapRef={gapRef} show={follow || showPath} />
-      <Floating selected={selected} gapRef={gapRef} fv={fv} patches={patches} />
+      <Edges selected={sel} f={f} gapRef={gapRef} mode={mode} />
+      <SelectionMarker selected={sel} gapRef={gapRef} />
+      <SignalPath path={shownPath} gapRef={gapRef} show={follow || showPath} />
+      <Floating selected={sel} gapRef={gapRef} fv={fv} patches={patches} ring={ring} />
       <OrbitControls ref={controls} makeDefault enabled={!follow} enableDamping dampingFactor={0.1} />
-      <CameraRig follow={follow} path={path} gapRef={gapRef} paused={paused} controls={controls} xrayKey={xray} />
+      <CameraRig follow={follow} path={shownPath} gapRef={gapRef} paused={paused} controls={controls} xrayKey={xray} flyTo={flyTo} />
     </Canvas>
   );
 }

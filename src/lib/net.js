@@ -7,8 +7,13 @@ export const LAYERS = [
   { key: 'conv1', label: 'Conv 1', shape: [6, 8, 8] },
   { key: 'conv2', label: 'Conv 2', shape: [12, 4, 4] },
   { key: 'dense', label: 'Dense', shape: [32] },
+  { key: 'sae', label: 'SAE features', shape: [256] },
   { key: 'out', label: 'Output', shape: [10] },
 ];
+
+// Which rooms the 3D view shows: raw neurons, or SAE features in place of the dense neurons.
+export const ORDER_NEURONS = ['input', 'conv1', 'conv2', 'dense', 'out'];
+export const ORDER_FEATURES = ['input', 'conv1', 'conv2', 'sae', 'out'];
 
 export function layerSize(key) {
   const L = LAYERS.find((l) => l.key === key);
@@ -18,6 +23,8 @@ export function layerSize(key) {
 function flat(a) {
   return Float32Array.from(a.flat(Infinity));
 }
+
+import { saeEncode, saeDecode, featureLogitEffect } from './sae.js';
 
 export function loadNet(json) {
   return {
@@ -103,29 +110,54 @@ function dense(inp, w, b, O) {
   return out;
 }
 
-// x: Float32Array(64), values 0..1
-export function forward(net, x) {
+// Fix one unit (or a whole conv channel) at a value during inference: a steering intervention.
+// clamp = { layer, index, value, scope }  layer: conv1 | conv2 | dense | sae
+//   conv layers: index is a channel, scope 'channel' (every position) or a flat unit index with scope 'unit'
+function applyClamp(a, clamp, layer, perChannel) {
+  if (!clamp || clamp.layer !== layer) return a;
+  const b = Float32Array.from(a);
+  if (perChannel && clamp.scope === 'channel') b.fill(clamp.value, clamp.index * perChannel, (clamp.index + 1) * perChannel);
+  else b[clamp.index] = clamp.value;
+  return b;
+}
+
+// x: Float32Array(64), values 0..1. opts.sae: the loaded SAE (adds acts.sae);
+// opts.clamp: a steering intervention, applied after the ReLU of its layer.
+export function forward(net, x, opts = {}) {
+  const { sae, clamp } = opts;
   const input = Float32Array.from(x);
   const c1pre = conv(input, 1, 8, 8, net.c1w, net.c1b, 6);
-  const c1 = relu(c1pre);
+  const c1 = applyClamp(relu(c1pre), clamp, 'conv1', 64);
   const p1 = pool(c1, 6, 8, 8);
   const c2pre = conv(p1.out, 6, 4, 4, net.c2w, net.c2b, 12);
-  const c2 = relu(c2pre);
+  const c2 = applyClamp(relu(c2pre), clamp, 'conv2', 16);
   const p2 = pool(c2, 12, 4, 4);
   const dpre = dense(p2.out, net.dw, net.db, 32);
-  const d = relu(dpre);
-  const logits = dense(d, net.ow, net.ob, 10);
+  const d = applyClamp(relu(dpre), clamp, 'dense');
+  let feats = null, dUsed = d;
+  if (sae) {
+    feats = saeEncode(sae, d);
+    if (clamp && clamp.layer === 'sae') {
+      // steer a feature, keeping the SAE's reconstruction error so nothing else changes (Templeton et al. 2024)
+      const rec = saeDecode(sae, feats);
+      feats = applyClamp(feats, clamp, 'sae');
+      const rec2 = saeDecode(sae, feats);
+      dUsed = d.map((v, j) => v + rec2[j] - rec[j]);
+    }
+  }
+  const logits = dense(dUsed, net.ow, net.ob, 10);
   const m = Math.max(...logits);
   const e = logits.map((v) => Math.exp(v - m));
   const z = e.reduce((a, b) => a + b, 0);
   const probs = e.map((v) => v / z);
   let pred = 0;
   for (let i = 1; i < 10; i++) if (logits[i] > logits[pred]) pred = i;
+  const empty = new Float32Array(sae ? sae.F : 256);
   return {
-    input, c1pre, c1, p1, c2pre, c2, p2, dpre, d, logits, probs, pred,
+    input, c1pre, c1, p1, c2pre, c2, p2, dpre, d, dUsed, logits, probs, pred, feats,
     // what the 3D view renders: post-ReLU activations, logits shown as probabilities
-    acts: { input, conv1: c1, conv2: c2, dense: d, out: probs },
-    pre: { input, conv1: c1pre, conv2: c2pre, dense: dpre, out: logits },
+    acts: { input, conv1: c1, conv2: c2, dense: dUsed, sae: feats ?? empty, out: probs },
+    pre: { input, conv1: c1pre, conv2: c2pre, dense: dpre, sae: feats ?? empty, out: logits },
   };
 }
 
@@ -225,19 +257,36 @@ export function resolveSource(f, src) {
   return 0;
 }
 
-// The path of strongest contribution, traced backward from the predicted class.
-// At each step we pick the incoming unit with the largest weight * activation.
-export function strongestPath(net, f) {
-  const path = [{ layer: 'out', index: f.pred }];
+// Incoming contributions used to trace a path, including the SAE hop in feature mode.
+function contributions(net, f, cur, sae) {
+  if (cur.layer === 'out' && sae) {
+    const list = [];
+    for (let fi = 0; fi < sae.F; fi++) {
+      if (!f.feats[fi]) continue;
+      list.push({ layer: 'sae', index: fi, v: featureLogitEffect(net, sae, fi)[cur.index] * f.feats[fi] });
+    }
+    return list;
+  }
+  if (cur.layer === 'sae') {
+    const list = [];
+    for (let j = 0; j < 32; j++) list.push({ layer: 'dense', index: j, v: sae.We[cur.index * sae.H + j] * (f.d[j] - sae.bd[j]) });
+    return list;
+  }
+  return incoming(net, cur.layer, cur.index).map((s) => {
+    const idx = resolveSource(f, s);
+    return { layer: s.layer, index: idx, v: s.w * f.acts[s.layer][idx] };
+  });
+}
+
+// The path of strongest contribution into a target unit (default: the predicted class),
+// traced backward. At each step we pick the incoming unit with the largest weight * activation.
+export function strongestPath(net, f, target = null, sae = null) {
+  const path = [target ?? { layer: 'out', index: f.pred }];
   let cur = path[0];
   while (cur.layer !== 'input') {
-    const inc = incoming(net, cur.layer, cur.index);
     let best = null, bv = -Infinity;
-    for (const s of inc) {
-      const idx = resolveSource(f, s);
-      const v = s.w * f.acts[s.layer][idx];
-      if (v > bv) { bv = v; best = { layer: s.layer, index: idx }; }
-    }
+    for (const c of contributions(net, f, cur, sae)) if (c.v > bv) { bv = c.v; best = { layer: c.layer, index: c.index }; }
+    if (!best) break;
     path.unshift(best);
     cur = best;
   }

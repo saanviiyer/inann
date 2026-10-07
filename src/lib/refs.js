@@ -70,6 +70,56 @@ export const REFS = {
     full: 'A. Vaswani et al. Attention Is All You Need. NeurIPS, 2017.',
     url: 'https://arxiv.org/abs/1706.03762',
   },
+  lin2023: {
+    short: 'Lin 2023',
+    full: 'J. Lin. Neuronpedia: Interactive Reference and Tooling for Analyzing Neural Networks. 2023. Software, neuronpedia.org. The source of the feature dashboard, test-activation, explanation search and steering ideas used here.',
+    url: 'https://www.neuronpedia.org',
+  },
+  bills2023: {
+    short: 'Bills et al. 2023',
+    full: 'S. Bills, N. Cammarata, D. Mossing, H. Tillman, L. Gao, G. Goh, I. Sutskever, J. Leike, J. Wu, W. Saunders. Language models can explain neurons in language models. OpenAI, 2023.',
+    url: 'https://openaipublic.blob.core.windows.net/neuron-explainer/paper/index.html',
+  },
+  bricken2023: {
+    short: 'Bricken et al. 2023',
+    full: 'T. Bricken, A. Templeton, J. Batson, B. Chen, A. Jermyn, et al. Towards Monosemanticity: Decomposing Language Models With Dictionary Learning. Transformer Circuits Thread, 2023.',
+    url: 'https://transformer-circuits.pub/2023/monosemantic-features/index.html',
+  },
+  templeton2024: {
+    short: 'Templeton et al. 2024',
+    full: 'A. Templeton, T. Conerly, J. Marcus, et al. Scaling Monosemanticity: Extracting Interpretable Features from Claude 3 Sonnet. Transformer Circuits Thread, 2024.',
+    url: 'https://transformer-circuits.pub/2024/scaling-monosemanticity/index.html',
+  },
+  lieberum2024: {
+    short: 'Lieberum et al. 2024',
+    full: 'T. Lieberum, S. Rajamanoharan, A. Conmy, L. Smith, N. Sonnerat, V. Varma, J. Kramar, A. Dragan, R. Shah, N. Nanda. Gemma Scope: Open Sparse Autoencoders Everywhere All At Once on Gemma 2. arXiv:2408.05147, 2024.',
+    url: 'https://arxiv.org/abs/2408.05147',
+  },
+  gao2024: {
+    short: 'Gao et al. 2024',
+    full: 'L. Gao, T. Dupre la Tour, H. Tillman, G. Goh, R. Troll, A. Radford, I. Sutskever, J. Leike, J. Wu. Scaling and evaluating sparse autoencoders. arXiv:2406.04093, 2024. (top-k SAEs, used here)',
+    url: 'https://arxiv.org/abs/2406.04093',
+  },
+  makhzani2013: {
+    short: 'Makhzani & Frey 2013',
+    full: 'A. Makhzani, B. Frey. k-Sparse Autoencoders. arXiv:1312.5663, 2013.',
+    url: 'https://arxiv.org/abs/1312.5663',
+  },
+  jolliffe2016: {
+    short: 'Jolliffe & Cadima 2016',
+    full: 'I. T. Jolliffe, J. Cadima. Principal component analysis: a review and recent developments. Philosophical Transactions of the Royal Society A 374, 2016.',
+    url: 'https://doi.org/10.1098/rsta.2015.0202',
+  },
+  wattenberg2016: {
+    short: 'Wattenberg et al. 2016',
+    full: 'M. Wattenberg, F. Viegas, I. Johnson. How to Use t-SNE Effectively. Distill, 2016.',
+    url: 'https://distill.pub/2016/misread-tsne/',
+  },
+  alain2016: {
+    short: 'Alain & Bengio 2016',
+    full: 'G. Alain, Y. Bengio. Understanding intermediate layers using linear classifier probes. arXiv:1610.01644, 2016.',
+    url: 'https://arxiv.org/abs/1610.01644',
+  },
 };
 
 export const REF_ORDER = Object.keys(REFS);

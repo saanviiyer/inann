@@ -15,6 +15,11 @@ npm run build      # static site in dist/, no backend
 3. **What neurons see.** Gradient-ascent feature visualization, animated and floating beside the neuron. Saliency is the 2D companion. You also get the top 5 real patches (the polysemanticity check) and a neighborhood map: cosine similarity over held-out digits, laid out with classical MDS.
 4. **Break it.** A greedy few-pixel adversarial nudge in the spirit of JSMA (Papernot et al. 2016), plus an occlusion slider and an occlusion sensitivity map (Zeiler & Fergus 2014).
 
+5. **Feature rooms.** Every neuron, conv channel and SAE feature has a room: activation histogram over the held-out digits, its top 12 digits floating in a ring around it, its written explanation with a simulation score, and a "test this neuron" pad (draw or type). A concept search in the header ("horizontal line", "the 7 detector") flies the camera to the match. This follows Neuronpedia (Lin 2023).
+6. **Steer it.** Clamp any unit to a value and watch the answer reroute live. The presets were found by a search over every unit (`scripts/find_presets.mjs`) and ranked by selectivity: how much the clamp moves one digit class, minus how much it sends every other digit to the same answer. Each preset shows its full counts.
+7. **Neurons vs features.** A top-k sparse autoencoder (256 features over the 32 dense neurons, k = 4) replaces the dense room when the header switch is on **Features**. A comparison view splits the most mixed neuron into the features that carry it.
+8. **Latent space.** The 450 held-out digits are shown as numerals in the PCA space of any layer, and they glide between layers when you switch. Your input appears as a live point. The view also offers nearest neighbours, a walk between two digits drawn as a trail, and two separability measures computed in the full space.
+
 Keys: `space` pauses all animation, `F` toggles follow-the-signal, `W A S D Q E` fly (hold shift to go faster).
 
 ## The model
@@ -27,6 +32,30 @@ Keys: `space` pauses all animation, `F` toggles follow-the-signal, `W A S D Q E`
 - `npm run check` checks that the JS forward pass reproduces the PyTorch logits (max diff about 3e-4, argmax 20/20). It also checks that the hand-written backward pass matches finite differences.
 
 Drawn input goes through the optdigits recipe: fit the ink into a 32x32 bitmap, then count the ink in each 4x4 block.
+
+## Offline scripts (nothing trains in the browser)
+
+| script | what it writes | time |
+|---|---|---|
+| `scripts/train.py` | `src/data/model.json`, `digits.json` | ~1 min |
+| `scripts/train_sae.py` | `src/data/sae.json` | ~20 s on CPU |
+| `scripts/find_presets.mjs` | `src/data/presets.json` | ~10 s |
+| `scripts/explain.py` | `src/data/explanations.json` | about 166 API calls |
+| `scripts/measure_purity.py` | prints the neuron vs feature comparison | seconds |
+
+`explain.py` follows Bills et al. 2023, adapted to images:
+1. Claude (`claude-opus-5-5`) writes one sentence per unit from its top 12 digits, using the even-indexed held-out half.
+2. In a fresh request, Claude sees only that sentence and predicts the unit's activation on 20 digits from the odd half: 10 top and 10 random.
+3. The score is the Pearson r between those predictions and the real activations. It is shown in the app, and an r below 0.3 gets a "weak explanation" badge.
+
+Only units active on at least 5 digits in each half are explained (83 of 306). The script needs `ANTHROPIC_API_KEY` in the environment or in `.env.local`, which is gitignored. Results are cached in `scripts/.cache`, so an interrupted run resumes where it stopped. Until it has run, the app labels the explanations as not generated, and search falls back to measured digit matches.
+
+## Measured results (held-out digits)
+
+- **SAE:** keeps 92.9% of the variance in the 32 dense neurons. Accuracy is 93.3% when the reconstruction replaces the neurons, against 95.8% for the original network. 184 features are active on held-out digits.
+- **Neurons vs features:** take the share of a unit's top 12 digits that are the same digit. The median is 0.67 for neurons (n = 19) and 0.83 for SAE features (n = 46). Only 5% of neurons are fully one digit, against 41% of features. Only units active on at least 12 digits are counted, so this is a rough proxy.
+- **Latent space:** 5-nearest-neighbour accuracy is flat across layers (95.8% on raw pixels), because these digits are easy. The between/within class distance ratio does grow with depth: 1.29 at the input pixels, 2.26 at the dense layer and 10.4 at the output.
+- **Steering:** the requested "1s become 0s" demo exists only as a non-selective lever. SAE feature 251 turns 42 of 45 held-out 1s into 0s, but it also turns 222 of 341 other digits into 0s. The app says so.
 
 ## Honesty rules the UI follows
 

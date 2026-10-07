@@ -1,6 +1,7 @@
 import React, { useMemo } from 'react';
 import { PixelGrid, Term, NotShown, Btn } from './ui.jsx';
-import { net, describe, SCALE } from '../lib/model.js';
+import { net, sae, describe, SCALE } from '../lib/model.js';
+import { featureLogitEffect } from '../lib/sae.js';
 import { incoming } from '../lib/net.js';
 import { topImages } from '../lib/analysis.js';
 
@@ -10,11 +11,22 @@ const LAYER_SENTENCE = {
   conv2: <>A second conv layer neuron. It reads a 3x3 patch from all 6 channels of Conv 1, after <Term k="max pooling" />.</>,
   dense: <>A <Term k="dense layer" /> neuron. It reads all 48 pooled values from Conv 2.</>,
   out: <>An output pod. Its score is turned into a <Term k="probability" /> for one digit.</>,
+  sae: <>A <Term k="sparse autoencoder">sparse autoencoder</Term> <Term k="SAE feature">feature</Term>: one direction in the 32 dense neurons, learned so that only a few are on for any digit.</>,
 };
 
 function WeightView({ sel }) {
   const { layer, index } = sel;
   if (layer === 'input') return null;
+  if (layer === 'sae') {
+    const dir = Array.from({ length: 32 }, (_, j) => sae.Wd[j * sae.F + index]);
+    const eff = Array.from(featureLogitEffect(net, sae, index));
+    return (
+      <div className="space-y-2">
+        <Bars values={dir} note="its direction in the 32 dense neurons" />
+        <Bars values={eff} note="its direct push on each digit's score, 0 to 9" labels />
+      </div>
+    );
+  }
   const inc = incoming(net, layer, index);
   const m = Math.max(...inc.map((s) => Math.abs(s.w))) || 1;
   if (layer === 'conv1') {
@@ -41,24 +53,27 @@ function WeightView({ sel }) {
     );
   }
   // dense and out: one bar per incoming weight
+  return <Bars values={inc.map((s) => s.w)} note={`${inc.length} incoming weights, orange positive, blue negative`} />;
+}
+
+function Bars({ values, note, labels }) {
+  const m = Math.max(...values.map(Math.abs)) || 1;
   return (
     <div>
       <div className="flex h-10 items-center gap-px">
-        {inc.map((s, i) => (
-          <div key={i} className="flex h-full flex-1 flex-col justify-center">
-            <div
-              style={{ height: `${Math.abs(s.w / m) * 50}%`, transform: s.w < 0 ? 'translateY(50%)' : 'translateY(-50%)' }}
-              className={s.w >= 0 ? 'bg-warm' : 'bg-cool'}
-            />
+        {values.map((w, i) => (
+          <div key={i} className="flex h-full flex-1 flex-col justify-center" title={`${labels ? `digit ${i}: ` : ''}${w.toFixed(3)}`}>
+            <div style={{ height: `${Math.abs(w / m) * 50}%`, transform: w < 0 ? 'translateY(50%)' : 'translateY(-50%)' }} className={w >= 0 ? 'bg-warm' : 'bg-cool'} />
           </div>
         ))}
       </div>
-      <div className="text-[11px] text-dim">{inc.length} incoming weights, orange positive, blue negative</div>
+      {labels && <div className="flex text-[9px] text-dim">{values.map((_, i) => <span key={i} className="flex-1 text-center">{i}</span>)}</div>}
+      <div className="text-[11px] text-dim">{note}</div>
     </div>
   );
 }
 
-export default function Inspector({ sel, f, rfMask, onClear }) {
+export default function Inspector({ sel, f, rfMask, onClear, embedded }) {
   const top = useMemo(() => (sel && sel.layer !== 'input' ? topImages(sel.layer, sel.index, 5) : null), [sel]);
   if (!sel)
     return (
@@ -72,14 +87,17 @@ export default function Inspector({ sel, f, rfMask, onClear }) {
   const rel = Math.min(1, Math.max(0, a / SCALE[sel.layer]));
   const inc = sel.layer === 'input' ? [] : incoming(net, sel.layer, sel.index);
   return (
-    <div className="space-y-3 rounded-lg border border-line p-3">
-      <div className="flex items-start justify-between gap-2">
-        <div>
-          <div className="text-sm font-semibold text-slate-100">{d.title}</div>
-          <p className="mt-1 text-xs leading-snug text-slate-400">{LAYER_SENTENCE[sel.layer]}</p>
+    <div className={`space-y-3 ${embedded ? '' : 'rounded-lg border border-line p-3'}`}>
+      {!embedded && (
+        <div className="flex items-start justify-between gap-2">
+          <div>
+            <div className="text-sm font-semibold text-slate-100">{d.title}</div>
+            <p className="mt-1 text-xs leading-snug text-slate-400">{LAYER_SENTENCE[sel.layer]}</p>
+          </div>
+          <Btn onClick={onClear}>Deselect</Btn>
         </div>
-        <Btn onClick={onClear}>Deselect</Btn>
-      </div>
+      )}
+      {embedded && <p className="text-xs leading-snug text-slate-400">{d.title}. {LAYER_SENTENCE[sel.layer]}</p>}
       <div className="grid grid-cols-2 gap-2 text-xs">
         <div className="rounded border border-line p-2">
           <div className="text-dim">{sel.layer === 'out' ? <Term k="probability" /> : <Term k="activation" />}</div>
@@ -107,7 +125,7 @@ export default function Inspector({ sel, f, rfMask, onClear }) {
           {inc.length > 0 && <div className="text-[10px] text-dim">Glowing lines in the space are the same weights.</div>}
         </div>
       </div>
-      {top && (
+      {top && !embedded && (
         <div>
           <div className="mb-1 text-xs text-slate-300">Held-out digits that excite it most</div>
           <div className="flex gap-1.5">
