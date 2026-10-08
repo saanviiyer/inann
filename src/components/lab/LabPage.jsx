@@ -18,6 +18,7 @@ import { linearSource, incomingWeights, preFlattenTensor } from '../../lib/lab/g
 import { PixelGrid } from '../ui.jsx';
 import { describeUnit, searchUnits } from '../../lib/lab/summary.js';
 import { ScoreBadge } from '../FeatureRoom.jsx';
+import { occlusionMap, readClassProb, readChannelMax } from '../../lib/lab/occlusion.js';
 import { pcaOf, knnAccOf, separationOf } from '../../lib/latent.js';
 
 const BASE = import.meta.env.BASE_URL;
@@ -396,7 +397,7 @@ export default function LabPage() {
       <aside ref={rightPanel} className="scroll-thin order-3 w-full shrink-0 space-y-3 border-line p-4 lg:w-[23rem] lg:overflow-y-auto lg:border-l">
         <Boundary key={selected ? `${selected.room}:${selected.index}:${!!selected.sae}` : 'none'}>
           <UnitCard
-            model={model} sel={selected} outs={outs} baseOuts={baseOuts} rooms={sceneRooms} onPick={onSelect} norm={norm} explFor={explFor} store={store} ds={ds} kind={kind} sae={sae} saeNow={saeNow}
+            model={model} sel={selected} outs={outs} baseOuts={baseOuts} rooms={sceneRooms} onPick={onSelect} norm={norm} explFor={explFor} pixelsNow={shownPixels} rawNow={useItem && !!ds?.raw} store={store} ds={ds} kind={kind} sae={sae} saeNow={saeNow}
             steer={steer} setSteer={setSteer} classes={classes} onClose={() => setSelected(null)} setItem={setItem}
             onPickFeature={(f) => setSelected({ room: sae.room, index: f, sae: true })}
           />
@@ -503,6 +504,7 @@ function DrawBox({ onDrawn }) {
 }
 
 function InputCard({ model, kind, norm, setNorm, prep, setPrep, pixels, setPixels, ds, item, setItem, probs, classes, pred, xFinal, source }) {
+  const rawItem = source === 'item' && !!ds?.raw;
   const [invert, setInvert] = useState(false);
   const top = probs ? probs.map((p, i) => [p, i]).sort((a, b) => b[0] - a[0]).slice(0, 5) : [];
   return (
@@ -577,6 +579,8 @@ function InputCard({ model, kind, norm, setNorm, prep, setPrep, pixels, setPixel
             </div>
           ))}
           <div className="text-[10px] text-dim">top 5 of {probs.length} (softmax of the first output if it is not already probabilities)</div>
+          <OcclusionView model={model} kind={kind} norm={norm} pixels={pixels} label={`the answer "${classes?.[pred] ?? pred}"`}
+            target={readClassProb(model.outputName, pred, maybeSoftmax)} deps={[pixels, pred]} raw={rawItem} />
         </div>
       )}
     </div>
@@ -690,7 +694,7 @@ function UnitPicker({ model, rooms, onPick }) {
   );
 }
 
-function UnitBody({ model, sel, outs, baseOuts, store, ds, kind, norm, sae, saeNow, steer, setSteer, classes, onClose, setItem, onPickFeature, explFor }) {
+function UnitBody({ model, sel, outs, baseOuts, store, ds, kind, norm, sae, saeNow, steer, setSteer, classes, onClose, setItem, onPickFeature, explFor, pixelsNow, rawNow }) {
   const r = model.describe(sel.room);
   const L = r.layout;
   const isFeat = !!sel.sae;
@@ -789,6 +793,10 @@ function UnitBody({ model, sel, outs, baseOuts, store, ds, kind, norm, sae, saeN
         </div>
       )}
 
+      {!isFeat && kind.kind === 'image' && (
+        <OcclusionView model={model} kind={kind} norm={norm} pixels={pixelsNow} label="this channel"
+          target={readChannelMax(sel.room, L, c)} deps={[pixelsNow, sel.room, c]} raw={rawNow} />
+      )}
       {!isFeat && <Weights model={model} room={sel.room} c={c} />}
       {!isFeat && kind.kind === 'tokens' && r.op === 'Softmax' && L.kind === 'spatial' && L.H === kind.T && (
         <div className="rounded-md border border-line p-2 text-[11px] text-slate-300">
@@ -1340,6 +1348,37 @@ function ExplCard({ expl, setExpl, model, sae }) {
             Load explanations .json<input type="file" accept=".json" className="hidden" onChange={(e) => e.target.files[0] && load(e.target.files[0])} />
           </label>
         </>
+      )}
+    </div>
+  );
+}
+
+// "Where does it look?" for image models: the occlusion map of a target over the current input.
+function OcclusionView({ model, kind, norm, pixels, target, label, deps, raw }) {
+  const [res, setRes] = useState(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => setRes(null), deps); // eslint-disable-line
+  if (kind?.kind !== 'image' || !pixels) return null;
+  if (raw) return <div className="text-[10px] text-dim">Occlusion is not shown for this item: the dataset holds pre-normalized inputs, so its display picture is not what the model reads.</div>;
+  const run = async () => {
+    setBusy(true);
+    try { setRes(await occlusionMap(model, pixels, kind, norm, target)); } finally { setBusy(false); }
+  };
+  return (
+    <div className="space-y-1 text-[11px]">
+      <Btn onClick={run} disabled={busy}>{busy ? 'Occluding...' : `Where does ${label} look?`}</Btn>
+      {res && (
+        <div className="flex items-start gap-2">
+          <div className="relative">
+            <Thumb pixels={pixels} kind={kind} size={84} />
+            <div className="pointer-events-none absolute inset-0 grid" style={{ gridTemplateColumns: `repeat(${kind.W}, 1fr)` }}>
+              {Array.from(res.heat, (v, i) => <div key={i} style={{ background: `rgba(255,181,71,${0.8 * Math.max(0, v) / (res.max || 1)})` }} />)}
+            </div>
+          </div>
+          <div className="leading-snug text-dim">
+            Orange marks regions whose covering lowers {label} most (largest drop {res.max.toFixed(3)} from {res.base.toFixed(3)}). {res.runs} covered copies, {res.patch}px patches.<Cite id="zeiler2014" />
+          </div>
+        </div>
       )}
     </div>
   );
