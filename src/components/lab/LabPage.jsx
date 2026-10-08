@@ -1091,6 +1091,31 @@ function SaeCard({ model, rooms, store, sae, setSae, ds, kind, norm, onShow, sae
     w.postMessage({ X, D, F: D * mult, k, steps, lr: 2e-3, batch: 128, seed: 3, items: { items: iv.items, N: iv.N, P: iv.P } });
   };
 
+  // quick SAEs at several k, to see the sparsity / reconstruction trade-off before a full run
+  const [sweepRes, setSweepRes] = useState(null);
+  const sweep = async () => {
+    const iv = itemVectors(store, room);
+    if (!iv) return;
+    const X = sampleRows(iv, 8000);
+    const ks = [1, 2, 4, 8, 16, 32].filter((kk) => kk <= D);
+    const points = [];
+    setSweepRes({ running: true, points: [], F: D * mult });
+    for (const kk of ks) {
+      const res = await new Promise((resolve) => {
+        const w = new Worker(new URL('../../lib/lab/sae.worker.js', import.meta.url), { type: 'module' });
+        let dead = 0;
+        w.onmessage = (e) => {
+          if (e.data.type === 'progress') dead = e.data.dead;
+          if (e.data.type === 'done') { w.terminate(); resolve({ k: kk, ve: e.data.metrics.varianceExplained, alive: D * mult - dead }); }
+        };
+        w.postMessage({ X, D, F: D * mult, k: kk, steps: 600, lr: 2e-3, batch: 128, seed: 3 });
+      });
+      points.push(res);
+      setSweepRes({ running: true, points: [...points], F: D * mult });
+    }
+    setSweepRes({ running: false, points, F: D * mult });
+  };
+
   const purityCompare = useMemo(() => {
     if (!sae?.stats || !store?.labels) return null;
     const F = sae.sae.F, N = sae.N;
@@ -1162,12 +1187,14 @@ function SaeCard({ model, rooms, store, sae, setSae, ds, kind, norm, onShow, sae
           <div className="flex gap-1.5">
             <Btn on onClick={start} disabled={train?.phase === 'training'}>{sae ? 'Train again' : 'Train SAE'}</Btn>
             {train?.phase === 'training' && <Btn onClick={() => { worker.current?.terminate(); setTrain(null); }}>Stop</Btn>}
+            <Btn onClick={sweep} disabled={!!sweepRes?.running || train?.phase === 'training'}>Sweep k</Btn>
             <label className="cursor-pointer rounded-md border border-line px-2.5 py-1 text-slate-200 hover:border-glow/40">
               Load SAE .json<input type="file" accept=".json" className="hidden" onChange={(e) => e.target.files[0] && importSae(e.target.files[0])} />
             </label>
           </div>
         </>
       )}
+      {sweepRes && <SweepChart res={sweepRes} onPick={(kk) => setK(kk)} />}
       {train && (
         <div className="space-y-1">
           <Curve points={train.curve} label={`held-out unexplained variance by step · step ${train.step} of ${steps} · ${train.dead} features idle · ${train.phase}`} />
@@ -1824,6 +1851,22 @@ function ChannelPatch({ model, room, L, c, pinned, xNow, classes }) {
           <Cite id="heimersheim2024" />
         </div>
       )}
+    </div>
+  );
+}
+
+function SweepChart({ res, onPick }) {
+  return (
+    <div className="space-y-1 rounded-md border border-line p-2">
+      <div className="text-slate-200">k sweep ({res.F} features, 600 quick steps each{res.running ? ', running' : ''})</div>
+      {res.points.map((p) => (
+        <button key={p.k} onClick={() => onPick(p.k)} className="flex w-full items-center gap-2 text-left text-[11px] hover:text-glow">
+          <span className="w-10 text-dim">k = {p.k}</span>
+          <div className="h-1.5 flex-1 overflow-hidden rounded bg-line"><div className="h-full rounded bg-[#3987e5]" style={{ width: `${Math.max(0, p.ve) * 100}%` }} /></div>
+          <span className="w-24 text-right text-slate-300">{(100 * p.ve).toFixed(1)}% · {p.alive} live</span>
+        </button>
+      ))}
+      <div className="text-[10px] text-dim">Held-out variance explained by k. Larger k reconstructs better but each feature carries less on its own (Gao et al. 2024). Click a row to use that k.</div>
     </div>
   );
 }

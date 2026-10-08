@@ -106,6 +106,7 @@ What you get for any model:
     - how often the answer survives replacing the layer with its reconstruction
     - neuron and feature label purity
   - You can download the SAE as JSON and load it again later.
+  - **Sweep k** trains quick SAEs at k = 1 to 32 to show the trade-off between sparsity and reconstruction before a full run. On the MNIST CNN's last hidden layer it goes from 82.8% variance explained at k = 1 to 97.2% at k = 16.
 - **Latent space** of any stored layer, or of the SAE's features, as a PCA cloud. It also shows full-space nearest-neighbour accuracy and the spacing ratio.
 - **Glowing incoming edges** for any unit, as in the Tour. They show weight times the activation it multiplies on the current input, per input channel for conv maps, and run from the room below to the selection. A test checks they are exact: summed over all inputs and plus the bias, they reproduce every unit's pre-activation in the MNIST CNN, MNIST MLP and CIFAR CNN.
 - **Incoming weights** for any unit, read from the model file. Conv kernels appear one tile per input channel. A dense layer's weights are laid out like the tensor it read: an MLP's first layer shows the 28x28 picture each neuron weighs.
