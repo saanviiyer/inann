@@ -39,5 +39,47 @@ for (const name of ['mnist_cnn', 'mnist_mlp', 'cifar_cnn']) {
     console.log(`${name} ${room.split('/').pop()} <- ${e.fromRoom.split('/').pop()}: sum ${total.toFixed(4)} vs pre-activation ${pre.toFixed(4)} ${e.exact ? (ok ? 'exact' : 'MISMATCH') : '(approximate, not checked)'}`);
   }
 }
+// Harder cases with every candidate tensor as a room: depthwise convs (MobileNetV2) and per-token
+// MatMuls (a tiny BERT). Skipped when those files have not been exported into scripts/.cache.
+for (const [file, feed] of [
+  ['mobilenet_v2.onnx', (inDims) => ({ input: new ort.Tensor('float32', Float32Array.from({ length: 3 * 224 * 224 }, (_, i) => Math.sin(i) * 0.5), [1, 3, 224, 224]) })],
+  ['tiny_bert.onnx', () => ({ input_ids: new ort.Tensor('int64', BigInt64Array.from({ length: 12 }, (_, i) => BigInt((i * 7) % 50)), [1, 12]), attention_mask: new ort.Tensor('int64', new BigInt64Array(12).fill(1n), [1, 12]) })],
+]) {
+  const url = new URL(`./.cache/${file}`, import.meta.url);
+  if (!fs.existsSync(url)) { console.log(`SKIP ${file}: not exported`); continue; }
+  const model = decodeModel(fs.readFileSync(url));
+  const sum = summarize(model);
+  const cands = candidateTensors(model, sum);
+  let s;
+  try { s = await ort.InferenceSession.create(encodeModel(withOutputs(model, cands.map((c) => c.name)))); } catch { console.log(`SKIP ${file}: could not expose all tensors`); continue; }
+  const feeds = feed();
+  const outs = await s.run(feeds);
+  const roomNames = cands.map((c) => c.name).filter((n) => outs[n]);
+  const inDims = sum.inputs[0].dims.slice(1).map((d) => (typeof d === 'number' && d > 0 ? d : 12));
+  const lab = { model, input: { name: sum.inputs[0].name }, inputDims: inDims };
+  const xIn = Float32Array.from(feeds[sum.inputs[0].name].data, Number);
+  const producer = {};
+  model.graph.node.forEach((n) => n.output.forEach((o) => (producer[o] = n)));
+  let checked = 0, bad = 0;
+  for (const room of roomNames) {
+    const n = producer[room];
+    if (!n || !['Conv', 'MatMul', 'Gemm'].includes(n.op_type)) continue; // check linear outputs directly
+    const L = layoutOf(outs[room].dims.slice(1));
+    for (const index of [0, Math.floor(L.size / 3) + 5, L.size - 1]) {
+      const e = unitEdges(lab, roomNames, outs, room, index, L, xIn, Infinity);
+      if (!e || !e.exact) continue;
+      const c = L.kind === 'spatial' ? Math.floor(index / L.P) : L.kind === 'seq' ? index % L.C : index;
+      const b = n.input[2] ? initializerArray(model, n.input[2]) : null;
+      if (n.input[2] && !b) continue; // bias computed elsewhere in the graph; not checkable here
+      const bias = b ? b.data[c] : 0;
+      const total = e.edges.reduce((a, t) => a + t.v, 0) + bias;
+      const pre = outs[room].data[index];
+      checked++;
+      if (Math.abs(total - pre) > 1e-3 * (1 + Math.abs(pre))) { bad++; if (bad < 4) console.log(`  ${file} ${room} #${index}: ${total.toFixed(4)} vs ${pre.toFixed(4)}`); }
+    }
+  }
+  console.log(`${file}: ${checked} exact units checked, ${bad} mismatches`);
+  if (bad) fail++;
+}
 if (fail) { console.error('FAIL'); process.exit(1); }
 console.log('OK edges');

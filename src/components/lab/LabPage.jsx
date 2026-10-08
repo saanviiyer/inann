@@ -398,6 +398,10 @@ export default function LabPage() {
       };
       w.postMessage({ mode: 'stats', sae: s, items: { items: iv.items, N: iv.N, P: iv.P } });
       setPendingSession(null);
+    } else if (store && pendingSession.sae) {
+      // the pass is done but the SAE's layer has no stored activations (budget, items or rooms differ)
+      setError(`The session's SAE is on ${pendingSession.sae.room}, which has no stored activations now; analyse fewer items or add that room, then open the session again.`);
+      setPendingSession(null);
     } else if (!pendingSession.sae && store) setPendingSession(null);
   }, [pendingSession, model, store]); // eslint-disable-line
 
@@ -490,8 +494,10 @@ export default function LabPage() {
           </Boundary>
         )}
         {view === 'gallery' && (
+          <Boundary key={model?.fileName}>
           <LabGallery store={store} rooms={sceneRooms.slice(1)} sae={sae} ds={ds} kind={kind} classes={classes} explFor={explFor}
             onPick={(sel) => setSelected(sel)} selected={selected} />
+          </Boundary>
         )}
         {view === 'report' && <LabReport store={store} rooms={sceneRooms.slice(1)} summaries={summaries} sae={sae} onPick={(e) => setSelected({ room: e.room, index: e.index, sae: e.sae })} />}
         {view === 'latent' && <LabLatent model={model} store={store} rooms={rooms} sae={sae} outs={outs} ds={ds} setItem={setItem} classes={classes} />}
@@ -1660,7 +1666,8 @@ function LabGallery({ store, rooms, sae, ds, kind, classes, explFor, onPick, sel
   const [limit, setLimit] = useState(96);
   useEffect(() => { if (!options.find((o) => o.key === key) && options.length) setKey(options[0].key); }, [options]); // eslint-disable-line
   const cards = useMemo(() => {
-    if (!store || !key || !ds) return [];
+    // the chosen layer may belong to a previous model or store; wait for the effect to reset it
+    if (!store || !key || !ds || !options.some((o) => o.key === key) || (key === '__sae' && !sae?.stats)) return [];
     const isSae = key === '__sae';
     const room = isSae ? sae.room : key;
     const st = store.stats[room], L = st.layout;
@@ -1677,7 +1684,7 @@ function LabGallery({ store, rooms, sae, ds, kind, classes, explFor, onPick, sel
     if (sort === 'freq') out.sort((a, b) => b.on - a.on);
     if (sort === 'purity') out.sort((a, b) => b.purity - a.purity);
     return out;
-  }, [store, key, sae, ds, classes, sort]);
+  }, [store, key, sae, ds, classes, sort, options]);
   if (!store) return <div className="flex h-full items-center justify-center p-6 text-sm text-dim">Run a dataset first; the gallery shows what every unit fires on.</div>;
   const thumbFor = (card) => {
     const top = topItems(card.acts, 8).filter((i) => card.acts[i] > 0);

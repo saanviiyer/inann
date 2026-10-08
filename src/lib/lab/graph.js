@@ -208,7 +208,13 @@ export function linearSource(model, tensor) {
     if (!n) return null;
     if (n.op_type === 'Conv' && inits.has(n.input[1])) {
       const w = initializerArray(model, n.input[1]);
-      return w && { op: 'Conv', ...w, group: num(n.attribute.find((a) => a.name === 'group')?.i) || 1, input: n.input[0] };
+      const ints = (name) => n.attribute.find((a) => a.name === name)?.ints?.map(num);
+      return w && {
+        op: 'Conv', ...w, input: n.input[0],
+        group: num(n.attribute.find((a) => a.name === 'group')?.i) || 1,
+        strides: ints('strides'), dilations: ints('dilations'), pads: ints('pads'),
+        autoPad: n.attribute.find((a) => a.name === 'auto_pad')?.s ? new TextDecoder().decode(n.attribute.find((a) => a.name === 'auto_pad').s) : null,
+      };
     }
     if (n.op_type === 'Gemm' && inits.has(n.input[1])) {
       const w = initializerArray(model, n.input[1]);

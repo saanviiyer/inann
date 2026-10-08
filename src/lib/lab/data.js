@@ -231,7 +231,12 @@ export function displayOf(ds, i, kind) {
 // dropped; the result is cut or padded (with the first vocabulary entry) to the model's length.
 export function textToIds(text, kind) {
   const ids = [];
-  if (kind.tokenizer === 'wordpiece' && kind.vocab) ids.push(...wordpiece(text, kind.vocab));
+  if (kind.tokenizer === 'wordpiece' && kind.vocab) {
+    // BERT-style truncation: cut the pieces, keep [CLS] and [SEP]
+    const w = wordpiece(text, kind.vocab);
+    const hasSep = kind.vocab.includes('[SEP]');
+    ids.push(...(w.length > kind.T && hasSep ? [...w.slice(0, kind.T - 1), w[w.length - 1]] : w));
+  }
   else if (kind.tokenizer === 'char' && kind.vocab) for (const ch of text) { const k = kind.vocab.indexOf(ch); if (k >= 0) ids.push(k); }
   else for (const t of text.split(/[\s,]+/)) if (t !== '' && !isNaN(+t)) ids.push(+t);
   const pad = kind.tokenizer === 'wordpiece' ? Math.max(0, kind.vocab.indexOf('[PAD]')) : 0;

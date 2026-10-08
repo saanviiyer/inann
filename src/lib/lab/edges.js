@@ -25,42 +25,57 @@ export function unitEdges(model, roomNames, outs, room, index, layout, inputTens
   const rd = read.dims.slice(1);
   let contrib = [];
   let exact = true;
+  let perChannel = src.op === 'Conv';
   if (src.op === 'Conv') {
     const [cin, kh, kw] = [w.cin, w.kh, w.kw];
     const [, H, W] = rd.length === 3 ? rd : [rd[0], 1, 1];
+    // grouped / depthwise: output channel c reads input channels g*cin .. g*cin+cin-1
+    const cout = src.dims[0];
+    const g = Math.floor(c / (cout / (src.group || 1)));
+    const base = g * cin;
+    // the exact window sum needs stride 1, dilation 1 and symmetric integer "same" padding
     const ph = (kh - 1) / 2, pw = (kw - 1) / 2;
-    const sameRes = L.kind === 'spatial' && L.H === H && L.W === W;
+    const ones = (a) => !a || a.every((v) => v === 1);
+    const padsOk = src.pads ? src.pads.length === 4 && src.pads[0] === ph && src.pads[2] === ph && src.pads[1] === pw && src.pads[3] === pw : !src.autoPad || src.autoPad === 'NOTSET';
+    const sameRes = L.kind === 'spatial' && L.H === H && L.W === W && ones(src.strides) && ones(src.dilations) && Number.isInteger(ph) && Number.isInteger(pw) && padsOk;
     const y0 = Math.floor(p / L.W), x0 = p % L.W;
     for (let k = 0; k < cin; k++) {
+      const ch = base + k;
       let v = 0;
       if (sameRes) {
         for (let dy = 0; dy < kh; dy++) for (let dx = 0; dx < kw; dx++) {
           const yy = y0 + dy - ph, xx = x0 + dx - pw;
           if (yy < 0 || yy >= H || xx < 0 || xx >= W) continue;
-          v += w.data[(k * kh + dy) * kw + dx] * x[k * H * W + yy * W + xx];
+          v += w.data[(k * kh + dy) * kw + dx] * x[ch * H * W + yy * W + xx];
         }
       } else {
         exact = false;
         let ws = 0, m = 0;
         for (let j = 0; j < kh * kw; j++) ws += w.data[k * kh * kw + j];
-        for (let j = 0; j < H * W; j++) m += x[k * H * W + j] / (H * W);
+        for (let j = 0; j < H * W; j++) m += x[ch * H * W + j] / (H * W);
         v = ws * m;
       }
-      contrib.push({ k, v });
+      contrib.push({ k: ch, v });
     }
   } else {
-    // dense row over the flattened input; group per channel if that input was a [C,H,W] map
     const n = w.data.length;
-    if (x.length < n) return null;
-    if (rd.length === 3) {
+    if (rd.length === 3 && fromRoom !== '__input' && rd[0] > 1) {
+      // a dense row over a flattened [C,H,W] map: one edge per channel
       const [C, H, W] = rd, per = H * W;
+      if (x.length < C * per) return null;
       for (let k = 0; k < C; k++) { let v = 0; for (let j = 0; j < per; j++) v += w.data[k * per + j] * x[k * per + j]; contrib.push({ k, v }); }
+      perChannel = true;
+    } else if (rd.length === 2 && rd[1] === n) {
+      // a MatMul over tokens: the unit at token p reads token p's features
+      for (let j = 0; j < n; j++) contrib.push({ k: p * n + j, v: w.data[j] * x[p * n + j] });
     } else {
+      // a plain vector, or a flattened input picture: one edge per input element
+      if (x.length < n) return null;
       for (let j = 0; j < n; j++) contrib.push({ k: j, v: w.data[j] * x[j] });
     }
   }
-  contrib = contrib.filter((e) => e.v !== 0).sort((a, b) => Math.abs(b.v) - Math.abs(a.v)).slice(0, limit);
-  return { fromRoom, perChannel: src.op === 'Conv' || rd.length === 3, exact, edges: contrib };
+  contrib = contrib.filter((e) => Number.isFinite(e.v) && e.v !== 0).sort((a, b) => Math.abs(b.v) - Math.abs(a.v)).slice(0, limit);
+  return { fromRoom, perChannel, exact, edges: contrib };
 }
 
 // Trace the answer back: from a unit, repeatedly step to the input unit with the largest positive
