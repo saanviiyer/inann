@@ -89,7 +89,7 @@ src/components/Scene.jsx   react-three-fiber space
 
 ## Lab: bring your own model
 
-Open the app, switch the header to **Lab: your model** (or go to `/#lab`), and drop in an `.onnx` file. It runs on your machine with ONNX Runtime Web, and the file never leaves the browser. Five example models are one click away: an MNIST CNN, an MNIST MLP, the Tour's 8x8 CNN, a parentheses transformer, and a colour CIFAR-10 CNN (67.6% test accuracy; in its last hidden layer, channel 8's 12 strongest images are all horses).
+Open the app, switch the header to **Lab: your model** (or go to `/#lab`), and drop in an `.onnx` file. **Show me around** walks a first-time visitor through the tower, a unit's room, a clamp, the traced answer, the gallery and the latent view, doing each action for them. It runs on your machine with ONNX Runtime Web, and the file never leaves the browser. Five example models are one click away: an MNIST CNN, an MNIST MLP, the Tour's 8x8 CNN, a parentheses transformer, and a colour CIFAR-10 CNN (67.6% test accuracy; in its last hidden layer, channel 8's 12 strongest images are all horses).
 
 What you get for any model:
 - **Rooms in 3D**, one per chosen tensor.
@@ -116,7 +116,7 @@ What you get for any model:
 - **Transformers.** Integer token inputs are tokenized through a `vocab` in the meta file. Attention maps render as one tile per head, and selecting a cell draws arcs from every key token to the query token over the input row.
 - **Gallery** (in the spirit of OpenAI Microscope): every channel or SAE feature of a layer as a card, showing the activation-weighted average of its top items (or its top token string), its measured summary and any explanation. Sort by number, activity or label purity. Dead units stand out: channel 6 of the MNIST CNN's first layer never fires on the 1000 test items.
 - **Report**: per layer, how many units never fire, how many always fire, median label purity and the most label-specific units. In the MNIST CNN, 19 of the 64 units in the last hidden layer never fire on the 1000 test items.
-- **Save image** downloads the current 3D view as a PNG.
+- **Save image** downloads the current 3D view as a PNG, and the report's **Download CSV** gives every unit's measured statistics (and explanation, if loaded) as one row each.
 - **Pin and compare.** Freeze one input; every room then shows this input minus the pinned one, so you can see where a 3 and an 8 part ways inside the network.
 - **Activation patching** (Meng et al. 2022; Heimersheim and Nanda 2024). With an input pinned, copy one layer, or one channel from its room, from the pinned input into the current one and see whether the answer follows. The panel says plainly that in a model without skip connections a whole-layer patch hands over the answer by construction, so single channels are the informative test.
 - **Occlusion maps** for the answer or any channel (Zeiler and Fergus 2014): forward-only "where does it look".

@@ -80,6 +80,7 @@ export default function LabPage() {
   const [expl, setExpl] = useState(null); // explanations from scripts/explain_lab.py
   const [pinned, setPinned] = useState(null);
   const [traceOn, setTraceOn] = useState(false);
+  const [guide, setGuide] = useState(null); // step index of the guided walk-through, or null
   const [outKind, setOutKind] = useState('classes'); // how to read the first output: class scores or raw values
   const [modelSrc, setModelSrc] = useState(null); // {example} or {url, metaUrl, dataUrl}, saved in sessions
   const [pendingSession, setPendingSession] = useState(null); // {outs, pixels, label} of a pinned input, for difference mode
@@ -419,6 +420,30 @@ export default function LabPage() {
     } else if (!pendingSession.sae && store) setPendingSession(null);
   }, [pendingSession, model, store]); // eslint-disable-line
 
+  // ---------- guided walk-through: each step does its action for you ----------
+  const guideSteps = useMemo(() => {
+    if (!model || !store) return [];
+    const hidden = sceneRooms.filter((r) => !r.isInputRoom && !r.isOutput);
+    const last = hidden[hidden.length - 1];
+    const best = summaries.filter((e) => !e.sae && e.room === last?.name && e.summary.purity).sort((a, b) => b.summary.purity.value - a.summary.purity.value)[0];
+    const steps = [
+      { title: 'The tower', text: 'Each floor is one layer, from the input at the bottom to the answer at the top. Brightness is how strongly each unit fires on the current input.', run: () => { setView('space'); setSelected(null); setFocusRoom(null); setFrameNonce((n) => n + 1); } },
+    ];
+    if (best) steps.push(
+      { title: 'One unit\'s room', text: `This is ${best.roomLabel}, channel ${best.c}: ${best.summary.text}. Its room shows its value now, a histogram over the dataset, its top items and its weights.`, run: () => { setView('space'); setSelected({ room: best.room, index: best.index }); setFocusRoom({ i: sceneRooms.findIndex((r) => r.name === best.room), nonce: Math.random() }); } },
+      { title: 'Grab it', text: 'Now it is clamped at its largest dataset value, for this input and everything downstream. The banner shows the clamp; the room says whether the answer moved. "What does it control?" tests the same clamp on 100 items.', run: () => { const acts = channelActs(store, best.room, best.c); setSteer({ room: best.room, c: best.c, p: null, value: Math.max(...acts) }); } },
+    );
+    if (kind?.kind !== 'tokens' && outKind === 'classes') steps.push(
+      { title: 'Follow the answer down', text: 'The warm path follows the strongest positive contribution from the answer down to the input, one layer at a time.', run: () => { setSteer(null); setTraceOn(true); setFocusRoom(null); setFrameNonce((n) => n + 1); } },
+    );
+    steps.push(
+      { title: 'Every unit at once', text: 'The gallery shows each unit of a layer as the average of the items it fires on most, sorted by how single-labelled they are.', run: () => { setTraceOn(false); setView('gallery'); } },
+      { title: 'Latent space', text: 'Every dataset item placed by how a layer represents it. Your input is the orange point.', run: () => setView('latent') },
+      { title: 'Your turn', text: 'Train a sparse autoencoder on any layer in the panel on the right; its features dock beside the layer. Then drop in your own .onnx model.', run: () => { setView('space'); setGuide(null); } },
+    );
+    return steps;
+  }, [model, store, sceneRooms, summaries, kind, outKind]); // eslint-disable-line
+
   // keyboard: arrows step through dataset items, P pins or unpins, Esc closes the room
   useEffect(() => {
     const key = (e) => {
@@ -463,6 +488,9 @@ export default function LabPage() {
         <div>
           <p className="text-xs uppercase tracking-[0.2em] text-dim">Lab · your model</p>
           <p className="mt-2 text-sm leading-relaxed text-slate-100">Load any ONNX model and walk through its layers, then train a sparse autoencoder on one of them, right here in the browser.</p>
+          {guideSteps.length > 0 && guide == null && (
+            <Btn on className="mt-2" onClick={() => { guideSteps[0].run(); setGuide(0); }}>Show me around (about a minute)</Btn>
+          )}
           <details className="mt-2 rounded-md border border-line px-2 py-1 text-xs text-slate-300">
             <summary className="cursor-pointer text-dim hover:text-slate-200">How to read the Lab</summary>
             <ol className="mt-1 list-decimal space-y-1 pl-4 leading-snug">
@@ -533,6 +561,16 @@ export default function LabPage() {
               </button>
             )}
             <button onClick={() => { setFocusRoom(null); setFrameNonce((n) => n + 1); }} className="block w-full rounded px-1.5 py-0.5 text-left text-dim hover:text-slate-200">whole model</button>
+          </div>
+        )}
+        {guide != null && guideSteps[guide] && (
+          <div className="absolute left-1/2 top-24 z-40 w-[26rem] max-w-[90%] -translate-x-1/2 rounded-lg border border-glow/50 bg-panel/95 p-3 text-xs text-slate-200 shadow-2xl">
+            <div className="text-[10px] uppercase tracking-[0.18em] text-glow">step {guide + 1} of {guideSteps.length} · {guideSteps[guide].title}</div>
+            <p className="mt-1 leading-relaxed">{guideSteps[guide].text}</p>
+            <div className="mt-2 flex gap-1.5">
+              {guide + 1 < guideSteps.length ? <Btn on onClick={() => { guideSteps[guide + 1].run(); setGuide(guide + 1); }}>Next</Btn> : null}
+              <Btn onClick={() => { setGuide(null); setSteer(null); setTraceOn(false); }}>{guide + 1 < guideSteps.length ? 'Stop' : 'Done'}</Btn>
+            </div>
           </div>
         )}
         {view === 'space' && outs && (
