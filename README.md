@@ -1,14 +1,18 @@
 # inann
 
-**in a neural network.** An interpretability viewer that lets you walk through a small trained CNN instead of treating it as a black box.
+**in a neural network.** Walk through a model's insides in 3D instead of treating it as a black box. Everything runs in the browser; there is no backend.
+
+- **Tour** (`/`): eight short chapters on a tiny trained digit network. They cover what neurons see, how to break the network, feature rooms with search, steering, sparse-autoencoder features and latent space. Every number on the page is computed from the bundled model.
+- **Lab** (`/#lab`): drop in **your own ONNX model** and get the same tools for it. Its layers become rooms in 3D, and every unit gets a room with its dataset statistics and weights. You can clamp units and run causal tests, train a sparse autoencoder on any layer in the browser and watch its features dock beside the layer, and use activation patching, occlusion maps, a gallery, a report and the latent space. It handles CNNs, MLPs, ResNets, MobileNets and transformers, including Hugging Face exports.
 
 ```
 npm install
-npm run dev        # http://localhost:5173
-npm run build      # static site in dist/, no backend
+npm run dev        # http://localhost:5173  (the Lab is at /#lab)
+npm run build      # static site in dist/
+npm test           # engine and model checks
 ```
 
-## Chapters
+## Tour chapters
 
 1. **Why this exists.** A perceptron learns a 2D dataset in about 30 seconds (Rosenblatt 1958).
 2. **Inside the network.** The CNN as rooms stacked in 3D: input, Conv 1, Conv 2, Dense, Output. Draw a digit and activations light up layer by layer. Click any neuron for its activation, incoming weights (glowing edges) and receptive field. `F` follows the strongest path, X-ray spreads or stacks the layers.
