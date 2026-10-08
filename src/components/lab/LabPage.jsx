@@ -430,12 +430,12 @@ export default function LabPage() {
       <aside ref={rightPanel} className="scroll-thin order-3 w-full shrink-0 space-y-3 border-line p-4 lg:w-[23rem] lg:overflow-y-auto lg:border-l">
         <Boundary key={selected ? `${selected.room}:${selected.index}:${!!selected.sae}` : 'none'}>
           <UnitCard
-            model={model} sel={selected} outs={outs} baseOuts={baseOuts} rooms={sceneRooms} onPick={onSelect} norm={norm} explFor={explFor} pixelsNow={shownPixels} rawNow={useItem && !!ds?.raw} store={store} ds={ds} kind={kind} sae={sae} saeNow={saeNow}
+            model={model} sel={selected} outs={outs} baseOuts={baseOuts} rooms={sceneRooms} onPick={onSelect} norm={norm} explFor={explFor} pixelsNow={shownPixels} rawNow={useItem && !!ds?.raw} outKind={outKind} store={store} ds={ds} kind={kind} sae={sae} saeNow={saeNow}
             steer={steer} setSteer={setSteer} classes={classes} onClose={() => setSelected(null)} setItem={setItem}
             onPickFeature={(f) => setSelected({ room: sae.room, index: f, sae: true })}
           />
         </Boundary>
-        {model && <Boundary><SaeCard model={model} rooms={sceneRooms.slice(1)} store={store} sae={sae} setSae={setSae} ds={ds} kind={kind} norm={norm} onShow={() => { setView('space'); }} saeNow={saeNow} onPickFeature={(f) => setSelected({ room: sae.room, index: f, sae: true })} /></Boundary>}
+        {model && <Boundary><SaeCard model={model} rooms={sceneRooms.slice(1)} store={store} sae={sae} setSae={setSae} ds={ds} kind={kind} norm={norm} onShow={() => { setView('space'); }} saeNow={saeNow} onPickFeature={(f) => setSelected({ room: sae.room, index: f, sae: true })} outKind={outKind} /></Boundary>}
       </aside>
     </main>
   );
@@ -738,7 +738,7 @@ function UnitPicker({ model, rooms, onPick }) {
   );
 }
 
-function UnitBody({ model, sel, outs, baseOuts, store, ds, kind, norm, sae, saeNow, steer, setSteer, classes, onClose, setItem, onPickFeature, explFor, pixelsNow, rawNow }) {
+function UnitBody({ model, sel, outs, baseOuts, store, ds, kind, norm, sae, saeNow, steer, setSteer, classes, onClose, setItem, onPickFeature, explFor, pixelsNow, rawNow, outKind }) {
   const r = model.describe(sel.room);
   const L = r.layout;
   const isFeat = !!sel.sae;
@@ -874,14 +874,14 @@ function UnitBody({ model, sel, outs, baseOuts, store, ds, kind, norm, sae, saeN
         )}
         <EffectTest model={model} ds={ds} kind={kind} norm={norm} store={store} classes={classes} room={sel.room}
           makeTransform={(v) => (isFeat ? saeTransform(sae.sae, L, 'steer', c, v) : neuronTransform(L, c, scope === 'unit' ? p : null, v))}
-          value={steering ? steer.value : max} />
+          value={steering ? steer.value : max} outKind={outKind} />
       </div>
     </div>
   );
 }
 
 // ---------- SAE ----------
-function SaeCard({ model, rooms, store, sae, setSae, ds, kind, norm, onShow, saeNow, onPickFeature }) {
+function SaeCard({ model, rooms, store, sae, setSae, ds, kind, norm, onShow, saeNow, onPickFeature, outKind: outKindRef }) {
   const candidates = rooms.filter((r) => !r.isOutput && r.layout.C >= 4 && store?.stats[r.name]?.full);
   const [room, setRoom] = useState('');
   const [mult, setMult] = useState(8);
@@ -922,7 +922,7 @@ function SaeCard({ model, rooms, store, sae, setSae, ds, kind, norm, onShow, sae
         setTrain((t) => ({ ...t, phase: 'measuring accuracy with the SAE in the loop' }));
         // accuracy when every vector of this layer is replaced by its reconstruction
         const n = Math.min(200, store.N);
-        let agree = 0, correct = 0, correctBase = 0;
+        let agree = 0, correct = 0, correctBase = 0, absChange = 0, absBase = 0;
         const tf = saeTransform(s, r.layout, 'recon');
         for (let k = 0; k < n; k++) {
           const i = Math.floor((k * store.N) / n); // evenly spaced: datasets are often sorted by class
@@ -930,10 +930,14 @@ function SaeCard({ model, rooms, store, sae, setSae, ds, kind, norm, onShow, sae
           const o = await model.runWith(xi, room, tf);
           const lg = o[model.outputName].data;
           const pr = Array.from(lg).indexOf(Math.max(...lg));
+          if (outKindRef === 'values') {
+            const base = (await model.run([xi]))[model.outputName].data;
+            lg.forEach((v, j) => { absChange += Math.abs(v - base[j]); absBase += Math.abs(base[j]); });
+          }
           if (pr === store.preds[i]) agree++;
           if (store.labels) { if (pr === store.labels[i]) correct++; if (store.preds[i] === store.labels[i]) correctBase++; }
         }
-        setSae((x) => ({ ...x, loop: { n, agree: agree / n, acc: store.labels ? correct / n : null, accBase: store.labels ? correctBase / n : null } }));
+        setSae((x) => ({ ...x, loop: { n, agree: agree / n, acc: store.labels ? correct / n : null, accBase: store.labels ? correctBase / n : null, rel: outKindRef === 'values' && absBase ? absChange / absBase : null } }));
         setTrain((t) => ({ ...t, phase: 'done' }));
         w.terminate();
         onShow();
@@ -1029,7 +1033,10 @@ function SaeCard({ model, rooms, store, sae, setSae, ds, kind, norm, onShow, sae
             Explains <span className="text-glow">{(100 * sae.metrics.varianceExplained).toFixed(1)}%</span> of held-out variance ({sae.metrics.nTest} vectors) with {sae.sae.k} of {sae.sae.F} features on;{' '}
             {sae.alive} features fire on at least one item.
           </div>
-          {sae.loop && (
+          {sae.loop && sae.loop.rel != null && (
+            <div>With the SAE's reconstruction in place of the layer, the outputs move by {(100 * sae.loop.rel).toFixed(1)}% of their size on average over {sae.loop.n} items.</div>
+          )}
+          {sae.loop && sae.loop.rel == null && (
             <div>
               With the SAE's reconstruction in place of the layer, the model's answer is unchanged on {(100 * sae.loop.agree).toFixed(0)}% of {sae.loop.n} items
               {sae.loop.acc != null && ` (accuracy ${(100 * sae.loop.acc).toFixed(1)}% vs ${(100 * sae.loop.accBase).toFixed(1)}%)`}.
@@ -1311,7 +1318,7 @@ function LabSearch({ entries, classes, onPick }) {
 // Tour's measured steering presets. Selectivity = share of the main source class sent to the main
 // target, minus the share of all other items sent there (a clamp that moves everything is not
 // evidence about one class).
-function EffectTest({ model, ds, kind, norm, store, classes, room, makeTransform, value }) {
+function EffectTest({ model, ds, kind, norm, store, classes, room, makeTransform, value, outKind }) {
   const [res, setRes] = useState(null);
   const [busy, setBusy] = useState(false);
   if (!ds || !store) return null;
@@ -1320,13 +1327,18 @@ function EffectTest({ model, ds, kind, norm, store, classes, room, makeTransform
     const n = Math.min(100, store.N);
     const tf = makeTransform(value);
     const moves = {};
-    let changed = 0;
+    let changed = 0, absChange = 0, absBase = 0;
     const perClass = {};
     // evenly spaced over the analysed items, since datasets are often sorted by class
     for (let k = 0; k < n; k++) {
       const i = Math.floor((k * store.N) / n);
       const o = await model.runWith(modelInputOf(ds, store.dsIndex[i], kind, norm), room, tf);
       const lg = o[model.outputName].data;
+      if (outKind === 'values') {
+        const base = (await model.run([modelInputOf(ds, store.dsIndex[i], kind, norm)]))[model.outputName].data;
+        lg.forEach((v, j) => { absChange += Math.abs(v - base[j]); absBase += Math.abs(base[j]); });
+        continue;
+      }
       const p = Array.from(lg).indexOf(Math.max(...lg));
       const b = store.preds[i];
       perClass[b] = (perClass[b] ?? 0) + 1;
@@ -1338,7 +1350,7 @@ function EffectTest({ model, ds, kind, norm, store, classes, room, makeTransform
       const othersN = n - (perClass[from] ?? 0) - (perClass[to] ?? 0);
       return { from, to, cnt, of: perClass[from] ?? 0, othersTo, othersN, sel: cnt / (perClass[from] || 1) - othersTo / (othersN || 1) };
     });
-    setRes({ n, changed, top, value });
+    setRes({ n, changed, top, value, rel: absBase ? absChange / absBase : null });
     setBusy(false);
   };
   const name = (k) => classes?.[k] ?? k;
@@ -1347,14 +1359,18 @@ function EffectTest({ model, ds, kind, norm, store, classes, room, makeTransform
       <Btn onClick={run} disabled={busy}>{busy ? 'Testing...' : `What does it control? Test at ${value.toFixed(2)} on ${Math.min(100, store.N)} items`}</Btn>
       {res && (
         <div className="mt-1 space-y-0.5 text-slate-300">
+          {outKind === 'values' ? (
+            <div>At {res.value.toFixed(2)}, the outputs moved by <span className="text-warm">{(100 * (res.rel ?? 0)).toFixed(1)}%</span> of their size on average, over {res.n} items.</div>
+          ) : (
           <div>At {res.value.toFixed(2)}, the answer changed on <span className="text-warm">{res.changed}</span> of {res.n} items.</div>
+          )}
           {res.top.map((t) => (
             <div key={`${t.from}>${t.to}`}>
               {t.cnt} of {t.of} predicted {name(t.from)} became {name(t.to)}; {t.othersTo} of {t.othersN} others also became {name(t.to)}
               <span className={t.sel > 0.5 ? ' text-glow' : ' text-dim'}> (selectivity {t.sel.toFixed(2)})</span>
             </div>
           ))}
-          {res.changed === 0 && <div className="text-dim">Nothing moved at this value; try a larger clamp.</div>}
+          {res.changed === 0 && outKind !== 'values' && <div className="text-dim">Nothing moved at this value; try a larger clamp.</div>}
           <div className="text-[10px] text-dim">Selectivity near 1 means the clamp moves one kind of item; near 0 means it pushes everything the same way.<Cite id="olah2020" /></div>
         </div>
       )}
