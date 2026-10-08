@@ -127,7 +127,17 @@ export function defaultRooms(model, cands) {
     }
   }
   const order = new Map(cands.map((c, i) => [c.name, i]));
-  const list = [...picks].filter((t) => order.has(t)).sort((a, b) => order.get(a) - order.get(b));
+  let list = [...picks].filter((t) => order.has(t)).sort((a, b) => order.get(a) - order.get(b));
+  // deep networks: keep the first activation, every residual block output (an activation fed
+  // by an Add), and the outputs, so a ResNet opens with one room per block instead of every ReLU
+  if (list.length > 14) {
+    const producer = {};
+    g.node.forEach((n) => n.output.forEach((o) => (producer[o] = n)));
+    const blockOut = (t) => { const n = producer[t]; return n && ACTIVATIONS.has(n.op_type) && producer[n.input[0]]?.op_type === 'Add'; };
+    const keep = list.filter((t, i) => i === 0 || blockOut(t) || cands[order.get(t)].isOutput);
+    if (keep.length >= 3) list = keep;
+    if (list.length > 14) list = list.filter((t, i) => i % Math.ceil(list.length / 12) === 0 || cands[order.get(t)].isOutput);
+  }
   if (list.length >= 2) return list;
   return cands.filter((c) => LINEAR.has(c.op) || c.isOutput).map((c) => c.name);
 }

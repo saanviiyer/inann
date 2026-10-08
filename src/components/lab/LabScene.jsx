@@ -175,22 +175,38 @@ function Marker({ pos, size = 0.25 }) {
   );
 }
 
-function Frame({ height, nonce }) {
+// Frame the whole tower, or (focus) one room. Tall towers open on their first few rooms.
+function Frame({ height, nonce, cx = 0, width = ROOM_W, focus }) {
   const { camera, controls, size } = useThree();
+  const fly = useRef(null);
   useEffect(() => {
     if (!controls) return;
     const t = Math.tan(((camera.fov / 2) * Math.PI) / 180);
-    const d = 1.1 * Math.max(height / 2 / t, ROOM_W / t / camera.aspect);
-    controls.target.set(0, height / 2, 0);
-    camera.position.copy(controls.target).addScaledVector(new THREE.Vector3(0.55, 0.32, 0.77).normalize(), d);
+    let ty, span, w = width, x = cx;
+    if (focus) { ty = focus.y; span = GAP * 1.6; w = Math.max(3, focus.width); x = focus.x ?? 0; }
+    else if (height > GAP * 6) { ty = GAP * 1.5; span = GAP * 4; }
+    else { ty = height / 2; span = height; }
+    const d = 1.1 * Math.max(span / 2 / t, w / t / camera.aspect, 4);
+    const toTgt = new THREE.Vector3(x, ty, 0);
+    const toCam = toTgt.clone().addScaledVector(new THREE.Vector3(0.55, 0.32, 0.77).normalize(), d);
+    fly.current = { t: 0, fromTgt: controls.target.clone(), toTgt, fromCam: camera.position.clone(), toCam, instant: !focus };
+  }, [height, nonce, controls, size.width, size.height, focus]); // eslint-disable-line
+  useFrame((_, dt) => {
+    const F = fly.current;
+    if (!F || !controls) return;
+    F.t = F.instant ? 1 : Math.min(1, F.t + dt / 1.1);
+    const e = F.t < 0.5 ? 2 * F.t * F.t : 1 - (-2 * F.t + 2) ** 2 / 2;
+    controls.target.lerpVectors(F.fromTgt, F.toTgt, e);
+    camera.position.lerpVectors(F.fromCam, F.toCam, e);
     controls.update();
-  }, [height, nonce, controls, size.width, size.height]); // eslint-disable-line
+    if (F.t >= 1) fly.current = null;
+  });
   return null;
 }
 
 // rooms: [{name, op, dims, layout, isOutput, label}]; values: {name: Float32Array without batch}
 // sae: {room, F, featNow: Float32Array(F), scale} or null
-export default function LabScene({ rooms, values, scales, inputPixels, inputChannels, classes, pred, selected, onSelect, onHover, sae, frameNonce }) {
+export default function LabScene({ rooms, values, scales, inputPixels, inputChannels, classes, pred, selected, onSelect, onHover, sae, frameNonce, focusRoom }) {
   const geos = useMemo(() => rooms.map((r, i) => roomGeometry(r, i === 0)), [rooms]);
   const ys = rooms.map((_, i) => i * GAP);
   const height = (rooms.length - 1) * GAP;
@@ -250,7 +266,9 @@ export default function LabScene({ rooms, values, scales, inputPixels, inputChan
       )}
       {marker && <Marker {...marker} />}
       <OrbitControls makeDefault enableDamping dampingFactor={0.1} />
-      <Frame height={height} nonce={frameNonce} />
+      <Frame
+        focus={focusRoom != null && rooms[focusRoom.i] ? { y: ys[focusRoom.i], width: geos[focusRoom.i].width ?? ROOM_W, nonce: focusRoom.nonce, x: focusRoom.sae && saeIdx >= 0 ? saeX : 0 } : null}
+        height={height} nonce={frameNonce} cx={saeIdx >= 0 ? (saeX + saeGeo.r) / 2 : 0} width={saeIdx >= 0 ? (ROOM_W + saeX + saeGeo.r) / 1.6 : ROOM_W} />
     </Canvas>
   );
 }

@@ -67,6 +67,7 @@ export default function LabPage() {
   const [sae, setSae] = useState(null); // {room, sae, metrics, stats, iv}
   const [view, setView] = useState('space');
   const [frameNonce, setFrameNonce] = useState(0);
+  const [focusRoom, setFocusRoom] = useState(null);
   const runId = useRef(0);
 
   // ---------- loading ----------
@@ -102,7 +103,24 @@ export default function LabPage() {
     await loadModel(bytes, m, `${file}.onnx`, dsJson ? datasetFromJson(dsJson, m.dataset.replace('.json', '')) : null);
   }, [loadModel]);
 
-  useEffect(() => { loadExample('mnist_cnn'); }, [loadExample]);
+  const loadUrl = useCallback(async (url, metaUrl, dataUrl) => {
+    try {
+      setStatus(`Fetching ${url}...`);
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const bytes = await res.arrayBuffer();
+      const m = metaUrl ? await fetch(metaUrl).then((r) => r.json()) : {};
+      const dsUrl = dataUrl ?? (m.dataset ? new URL(m.dataset, new URL(metaUrl ?? url, location.href)).href : null);
+      const dsJson = dsUrl ? await fetch(dsUrl).then((r) => r.json()) : null;
+      await loadModel(bytes, m, url.split('/').pop().split('?')[0], dsJson ? datasetFromJson(dsJson, dsUrl.split('/').pop()) : null);
+    } catch (e) { setError(`Could not fetch ${url}: ${e.message ?? e}. The server must allow cross-origin requests.`); setStatus(''); }
+  }, [loadModel]);
+
+  useEffect(() => {
+    const q = new URLSearchParams(location.search);
+    if (q.get('model')) loadUrl(q.get('model'), q.get('meta'), q.get('data'));
+    else loadExample('mnist_cnn');
+  }, [loadExample, loadUrl]);
 
   const onFiles = async (files) => {
     const list = [...files];
@@ -218,6 +236,7 @@ export default function LabPage() {
   }, [sae, outs, model]);
 
   const onSelect = useCallback((s) => { if (s.room !== '__input') setSelected(s); }, []);
+  useEffect(() => { if (sae) setFrameNonce((n) => n + 1); }, [sae?.room, sae?.sae]); // eslint-disable-line
   const onHover = useCallback((h) => setHover(h), []);
 
   // ---------- render ----------
@@ -228,7 +247,7 @@ export default function LabPage() {
           <p className="text-xs uppercase tracking-[0.2em] text-dim">Lab · your model</p>
           <p className="mt-2 text-sm leading-relaxed text-slate-100">Load any ONNX model and walk through its layers, then train a sparse autoencoder on one of them, right here in the browser.</p>
         </div>
-        <ModelCard model={model} meta={meta} onFiles={onFiles} onExample={loadExample} status={status} error={error} clearError={() => setError('')} />
+        <ModelCard model={model} meta={meta} onFiles={onFiles} onExample={loadExample} onUrl={loadUrl} status={status} error={error} clearError={() => setError('')} />
         {model && kind && (
           <InputCard
             model={model} kind={kind} norm={norm} setNorm={setNorm} prep={prep} setPrep={setPrep} pixels={shownPixels} setPixels={setCustom}
@@ -253,7 +272,7 @@ export default function LabPage() {
           <Boundary>
             <LabScene
               rooms={sceneRooms} values={values} scales={scales} inputPixels={kind?.kind === 'image' ? shownPixels : null} inputChannels={kind?.C}
-              classes={classes} pred={pred} selected={selected} onSelect={onSelect} onHover={onHover} sae={saeNow} frameNonce={frameNonce}
+              classes={classes} pred={pred} selected={selected} onSelect={onSelect} onHover={onHover} sae={saeNow} frameNonce={frameNonce} focusRoom={focusRoom}
             />
           </Boundary>
         )}
@@ -261,6 +280,22 @@ export default function LabPage() {
         <div className="pointer-events-none absolute bottom-3 left-3 rounded bg-black/50 px-2 py-1 text-[11px] text-slate-300">
           {hover && outs ? <HoverText hover={hover} model={model} outs={outs} saeNow={saeNow} /> : view === 'space' ? 'Drag to orbit, scroll to zoom, click any unit.' : 'Each mark is one dataset item, placed by PCA of the chosen layer.'}
         </div>
+        {view === 'space' && sceneRooms.length > 3 && (
+          <div className="absolute right-3 top-14 z-20 max-h-[70%] space-y-px overflow-y-auto scroll-thin rounded-md border border-line bg-panel/80 p-1 text-[10px]">
+            <div className="px-1 pb-0.5 text-dim">fly to</div>
+            {[...sceneRooms.map((r, i) => ({ r, i }))].reverse().map(({ r, i }) => (
+              <button key={r.name} onClick={() => setFocusRoom({ i, nonce: Math.random() })} className="block w-full rounded px-1.5 py-0.5 text-left text-slate-300 hover:bg-glow/10 hover:text-glow">
+                {r.label}
+              </button>
+            ))}
+            {saeNow && (
+              <button onClick={() => setFocusRoom({ i: sceneRooms.findIndex((r) => r.name === saeNow.room), sae: true, nonce: Math.random() })} className="block w-full rounded px-1.5 py-0.5 text-left text-warm hover:bg-warm/10">
+                SAE features
+              </button>
+            )}
+            <button onClick={() => { setFocusRoom(null); setFrameNonce((n) => n + 1); }} className="block w-full rounded px-1.5 py-0.5 text-left text-dim hover:text-slate-200">whole model</button>
+          </div>
+        )}
         {steer && (
           <div className="absolute right-3 top-3 z-20 flex items-center gap-2 rounded-md border border-warm/50 bg-black/70 px-2 py-1 text-xs text-warm">
             Clamped {steer.sae ? `SAE feature ${steer.feature}` : `channel ${steer.c}${steer.p != null ? ' at one position' : ''}`} = {steer.value.toFixed(2)}
@@ -274,9 +309,10 @@ export default function LabPage() {
           <UnitCard
             model={model} sel={selected} outs={outs} baseOuts={baseOuts} store={store} ds={ds} kind={kind} sae={sae} saeNow={saeNow}
             steer={steer} setSteer={setSteer} classes={classes} onClose={() => setSelected(null)} setItem={setItem}
+            onPickFeature={(f) => setSelected({ room: sae.room, index: f, sae: true })}
           />
         </Boundary>
-        {model && <Boundary><SaeCard model={model} rooms={rooms} store={store} sae={sae} setSae={setSae} ds={ds} kind={kind} norm={norm} onShow={() => { setView('space'); }} /></Boundary>}
+        {model && <Boundary><SaeCard model={model} rooms={rooms} store={store} sae={sae} setSae={setSae} ds={ds} kind={kind} norm={norm} onShow={() => { setView('space'); }} saeNow={saeNow} onPickFeature={(f) => setSelected({ room: sae.room, index: f, sae: true })} /></Boundary>}
       </aside>
     </main>
   );
@@ -299,8 +335,9 @@ function HoverText({ hover, model, outs, saeNow }) {
 }
 
 // ---------- model ----------
-function ModelCard({ model, meta, onFiles, onExample, status, error, clearError }) {
+function ModelCard({ model, meta, onFiles, onExample, onUrl, status, error, clearError }) {
   const [drag, setDrag] = useState(false);
+  const [url, setUrl] = useState('');
   const s = model?.summary;
   return (
     <div className="space-y-2 rounded-lg border border-line p-3">
@@ -320,6 +357,10 @@ function ModelCard({ model, meta, onFiles, onExample, status, error, clearError 
         <span className="text-[10px] text-dim">examples:</span>
         {EXAMPLES.map((ex) => <Btn key={ex.file} onClick={() => onExample(ex.file)}>{ex.label}</Btn>)}
       </div>
+      <form className="flex gap-1" onSubmit={(e) => { e.preventDefault(); if (url.trim()) onUrl(url.trim()); }}>
+        <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="or paste a URL to an .onnx file" className="min-w-0 flex-1 rounded border border-line bg-panel px-2 py-1 text-[11px] text-slate-100 placeholder:text-dim" />
+        <Btn type="submit">Load</Btn>
+      </form>
       {status && <div className="text-xs text-glow">{status}</div>}
       {error && (
         <div className="rounded border border-red-900 p-2 text-xs text-red-300">
@@ -533,7 +574,7 @@ function UnitCard(props) {
   return <UnitBody {...props} />;
 }
 
-function UnitBody({ model, sel, outs, baseOuts, store, ds, kind, sae, saeNow, steer, setSteer, classes, onClose, setItem }) {
+function UnitBody({ model, sel, outs, baseOuts, store, ds, kind, sae, saeNow, steer, setSteer, classes, onClose, setItem, onPickFeature }) {
   const r = model.describe(sel.room);
   const L = r.layout;
   const isFeat = !!sel.sae;
@@ -599,10 +640,12 @@ function UnitBody({ model, sel, outs, baseOuts, store, ds, kind, sae, saeNow, st
             ))}
           </div>
           {pur && <div className="mt-1 text-[11px] text-slate-300">{pur.count} of its top 12 are labeled {classes?.[pur.label] ?? pur.label}.</div>}
+          {kind.kind === 'image' && <AverageInput ds={ds} kind={kind} top={top} acts={acts} />}
           {L.P > 1 && kind.kind === 'image' && <div className="text-[10px] text-dim">Boxes scale the layer's grid onto the image; they show roughly where, not the exact receptive field.</div>}
         </div>
       )}
 
+      {!isFeat && sae && sae.room === sel.room && <WrittenBy sae={sae} c={c} onPick={(f) => onPickFeature?.(f)} />}
       <div className="space-y-1.5 rounded-md border border-line p-2">
         <div className="flex items-center justify-between text-xs">
           <span className="text-slate-200"><Term k="clamp">Clamp</Term> {isFeat ? 'this feature' : scope === 'channel' ? 'this channel' : 'this unit'}</span>
@@ -632,7 +675,7 @@ function UnitBody({ model, sel, outs, baseOuts, store, ds, kind, sae, saeNow, st
 }
 
 // ---------- SAE ----------
-function SaeCard({ model, rooms, store, sae, setSae, ds, kind, norm, onShow }) {
+function SaeCard({ model, rooms, store, sae, setSae, ds, kind, norm, onShow, saeNow, onPickFeature }) {
   const candidates = rooms.filter((r) => !r.isOutput && r.layout.C >= 4 && store?.stats[r.name]?.full);
   const [room, setRoom] = useState('');
   const [mult, setMult] = useState(8);
@@ -787,6 +830,18 @@ function SaeCard({ model, rooms, store, sae, setSae, ds, kind, norm, onShow }) {
               <span className="text-dim"> Units active on fewer than 12 items are left out; a label is a rough stand-in for one meaning.</span>
             </div>
           )}
+          {saeNow && (
+            <div>
+              <div className="text-[11px] text-slate-200">Features on for this input (click to open):</div>
+              <div className="mt-1 flex flex-wrap gap-1">
+                {Array.from(saeNow.featNow.keys()).filter((f) => saeNow.featNow[f] > 0).sort((a, b) => saeNow.featNow[b] - saeNow.featNow[a]).slice(0, 16).map((f) => (
+                  <button key={f} onClick={() => onPickFeature(f)} className="rounded border border-warm/40 px-1.5 py-px text-[10px] text-warm hover:bg-warm/10">
+                    #{f} · {saeNow.featNow[f].toFixed(1)}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
           <div className="flex gap-1.5 pt-1">
             <Btn onClick={download}>Download SAE .json</Btn>
             <Btn onClick={() => setSae(null)}>Remove</Btn>
@@ -857,6 +912,62 @@ function LabLatent({ model, store, rooms, sae, outs, ds, setItem, classes }) {
         )}
         <div className="text-[10px] text-dim">Click a mark to load that item. The 3D view hides the other {P ? P.D - 3 : 0} dimensions; the measures use all of them.<Cite id="wattenberg2016" /></div>
       </div>
+    </div>
+  );
+}
+
+// The activation-weighted mean of a unit's top items: a forward-only stand-in for feature
+// visualization, which needs gradients that ONNX Runtime Web does not provide.
+function AverageInput({ ds, kind, top, acts }) {
+  const avg = useMemo(() => {
+    if (!top.length) return null;
+    const out = new Float32Array(kind.C * kind.H * kind.W);
+    let w = 0;
+    for (const i of top) {
+      const a = Math.max(0, acts[i]);
+      const px = displayOf(ds, i, kind);
+      for (let j = 0; j < out.length; j++) out[j] += a * px[j];
+      w += a;
+    }
+    let mx = 0;
+    for (let j = 0; j < out.length; j++) { out[j] /= w || 1; mx = Math.max(mx, out[j]); }
+    for (let j = 0; j < out.length; j++) out[j] /= mx || 1;
+    return out;
+  }, [ds, kind, top, acts]);
+  if (!avg) return null;
+  return (
+    <div className="mt-2 flex items-center gap-2">
+      <Thumb pixels={avg} kind={kind} size={56} />
+      <div className="text-[10px] leading-snug text-dim">
+        Average of its top 12, weighted by activation. Gradient-based feature visualization is not shown here: ONNX Runtime Web gives no gradients.
+      </div>
+    </div>
+  );
+}
+
+// Which SAE features write most to channel c of the layer: decoder weight times how much the
+// feature is used across the dataset (Bricken et al. 2023 read neurons through features this way).
+function WrittenBy({ sae, c, onPick }) {
+  const list = useMemo(() => {
+    const { F, D, Wd } = sae.sae;
+    const use = new Float64Array(F);
+    for (let i = 0; i < sae.stats.featMax.length; i++) use[i % F] += sae.stats.featMax[i];
+    return Array.from({ length: F }, (_, f) => [f, Wd[f * D + c] * use[f]]).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]).slice(0, 6);
+  }, [sae, c]);
+  if (!list.length) return null;
+  const top = list[0][1];
+  return (
+    <div className="rounded-md border border-line p-2 text-xs">
+      <div className="text-slate-200">Features that write to this channel most</div>
+      <div className="mt-1 space-y-0.5">
+        {list.map(([f, v]) => (
+          <button key={f} onClick={() => onPick(f)} className="flex w-full items-center gap-2 text-left text-[11px] hover:text-warm">
+            <span className="w-10 text-warm">#{f}</span>
+            <div className="h-1.5 flex-1 overflow-hidden rounded bg-line"><div className="h-full bg-warm/70" style={{ width: `${(v / top) * 100}%` }} /></div>
+          </button>
+        ))}
+      </div>
+      <div className="mt-1 text-[10px] text-dim">decoder weight on this channel times the feature's total activation over the dataset</div>
     </div>
   );
 }
