@@ -152,6 +152,15 @@ torch.onnx.export(model.eval(), example_input, "model.onnx",
 
 A dynamic batch axis makes the dataset pass much faster. Keras and TensorFlow models convert with `tf2onnx`.
 
+Or use the helper, which writes the model, its meta file and a dataset in one call:
+
+```python
+import sys; sys.path.append("scripts")
+from inann_export import export
+export(model, example_input, "out/my_model", classes=["cat", "dog"], input_kind="image", norm="imagenet",
+       dataset=(images_0_to_1, labels))
+```
+
 ### Optional `model.meta.json` (drop it next to the `.onnx`)
 
 ```json
