@@ -151,10 +151,13 @@ export async function datasetFromImages(files, kind, invert) {
     names.push(parts.length > 2 ? parts[parts.length - 2] : (f.name.match(/^([^_\-. ]+)[_\-]/)?.[1] ?? null));
   }
   const uniq = [...new Set(names.filter((v) => v != null))].sort((a, b) => (isNaN(a) || isNaN(b) ? a.localeCompare(b) : a - b));
-  const labeled = names.every((v) => v != null) && uniq.length > 1 && uniq.length <= 50;
+  const labeled = names.every((v) => v != null) && uniq.length > 1 && uniq.length <= 1000;
+  // numeric folder names ("0".."9") keep their value so they line up with model outputs
+  const numeric = labeled && uniq.every((v) => /^\d+$/.test(v));
+  const classes = !labeled ? null : numeric ? Array.from({ length: Math.max(...uniq.map(Number)) + 1 }, (_, k) => String(k)) : uniq;
   return {
     name: `${imgs.length} uploaded images`, n: imgs.length, size: imgs[0]?.length ?? 0,
-    labels: labeled ? names.map((v) => uniq.indexOf(v)) : null, classes: labeled ? uniq : null,
+    labels: labeled ? names.map((v) => (numeric ? Number(v) : uniq.indexOf(v))) : null, classes,
     source: 'your files', item: (i) => imgs[i],
   };
 }
@@ -187,10 +190,13 @@ export function datasetFromNpy(x, y, kind, raw = false) {
   const image = kind.kind === 'image';
   let mx = 1;
   if (image && !isByte && !raw) for (let i = 0; i < Math.min(x.data.length, 200000); i++) mx = Math.max(mx, x.data[i]);
+  // integer labels keep their value, so label k lines up with model output k
   const labels = y ? Array.from(y.data, Number) : null;
-  const classes = labels ? [...new Set(labels)].sort((a, b) => a - b).map(String) : null;
+  const intLabels = labels && labels.every((v) => Number.isInteger(v) && v >= 0 && v < 10000);
+  const uniq = labels ? [...new Set(labels)].sort((a, b) => a - b) : null;
+  const classes = labels ? (intLabels ? Array.from({ length: Math.max(...labels) + 1 }, (_, k) => String(k)) : uniq.map(String)) : null;
   return {
-    name: `${n} items from .npy`, n, size, labels: labels ? labels.map((v) => classes.indexOf(String(v))) : null, classes,
+    name: `${n} items from .npy`, n, size, labels: labels ? (intLabels ? labels : labels.map((v) => uniq.indexOf(v))) : null, classes,
     source: 'your .npy file', raw: raw || !image,
     item: (i) => {
       const s = x.data.subarray(i * size, (i + 1) * size);

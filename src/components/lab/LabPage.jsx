@@ -92,7 +92,8 @@ export default function LabPage() {
   const loadModel = useCallback(async (bytes, m = {}, fileName = 'model.onnx', dataset = null) => {
     lastBytes.current = { bytes, m, fileName, dataset };
     setError(''); setStatus(`Loading ${fileName}...`);
-    setStore(null); setSae(null); setSteer(null); setSelected(null); setOuts(null);
+    passId.current++; setProgress(null);
+    setStore(null); setSae(null); setSteer(null); setSelected(null); setOuts(null); setPinned(null);
     try {
       const lm = await LabModel.load(bytes, m, fileName);
       const k = inputKind(lm.inputDims, m, lm.inputType);
@@ -102,7 +103,9 @@ export default function LabPage() {
       setRoomNames(lm.rooms.map((r) => r.name));
       const perItem = lm.rooms.reduce((a, r) => a + (r.layout?.size ?? 0), 0);
       setMaxItems(lm.summary.params > 5e6 || perItem > 2e5 ? 100 : 1000);
-      setOutKind(m.output?.kind === 'values' ? 'values' : 'classes');
+      // one output value is a regression unless the meta file says otherwise
+      const outSize = (lm.shapes[lm.outputName] ?? []).reduce((a, b) => a * b, 1);
+      setOutKind(m.output?.kind ?? (outSize === 1 ? 'values' : 'classes'));
       setPixels(new Float32Array(k.kind === 'image' ? k.C * k.H * k.W : lm.inputSize));
       if (k.kind === 'tokens' && !dataset) setSource('custom');
       setDs(dataset);
@@ -195,16 +198,21 @@ export default function LabPage() {
 
   // ---------- dataset analysis ----------
   const rooms = useMemo(() => (model ? roomNames.map((n) => model.describe(n)).filter((r) => r.dims) : []), [model, roomNames]);
+  const passId = useRef(0);
   const analyze = useCallback(async () => {
     if (!model || !ds) return;
+    const id = ++passId.current; // a newer pass, model or dataset makes this one stale
     setProgress(0);
     try {
-      const st = await collect(model, ds, kind, norm, rooms, { max: maxItems, onProgress: setProgress });
+      const st = await collect(model, ds, kind, norm, rooms, { max: maxItems, onProgress: (f) => id === passId.current && setProgress(f) });
+      if (id !== passId.current) return;
+      setSae(null); setSteer(null); // an SAE's statistics index the store it was built on
       setStore(st);
-    } catch (e) { setError(`Dataset pass failed: ${e.message ?? e}`); }
-    setProgress(null);
+    } catch (e) { if (id === passId.current) setError(`Dataset pass failed: ${e.message ?? e}`); }
+    if (id === passId.current) setProgress(null);
   }, [model, ds, kind, norm, rooms, maxItems]);
-  useEffect(() => { if (model && ds && !store && progress == null) analyze(); }, [model, ds, store]); // eslint-disable-line
+  // whenever the store is cleared (new model, dataset, rooms, session), start a fresh pass
+  useEffect(() => { if (model && ds && !store) analyze(); }, [model, ds, store, rooms]); // eslint-disable-line
 
   const onDatasetFiles = async (files, invert) => {
     const list = [...files];
@@ -250,11 +258,11 @@ export default function LabPage() {
       }
       return v;
     }
-    for (const r of rooms) if (outs[r.name]) v[r.name] = r.isOutput && r.layout.size <= 32 ? Float32Array.from(maybeSoftmax(outs[r.name].data)) : outs[r.name].data;
+    for (const r of rooms) if (outs[r.name]) v[r.name] = r.isOutput && r.layout.size <= 32 && outKind === 'classes' ? Float32Array.from(maybeSoftmax(outs[r.name].data)) : outs[r.name].data;
     if (inputRoom && kind?.kind === 'tokens' && xFinal) v.__input = Float32Array.from(xFinal, () => 0.6);
     else if (inputRoom && kind?.kind !== 'image' && xFinal) v.__input = xFinal;
     return v;
-  }, [outs, rooms, inputRoom, kind, xFinal, pinned]);
+  }, [outs, rooms, inputRoom, kind, xFinal, pinned, outKind]);
   const scales = useMemo(() => {
     const s = {};
     for (const r of rooms) {
@@ -265,14 +273,14 @@ export default function LabPage() {
         s[r.name] = m || 1; s[`${r.name}:signed`] = true;
         continue;
       }
-      if (r.isOutput && r.layout.size <= 32) { s[r.name] = 1; continue; }
+      if (r.isOutput && r.layout.size <= 32 && outKind === 'classes') { s[r.name] = 1; continue; }
       if (st) { s[r.name] = st.scale; s[`${r.name}:signed`] = st.signed; }
       else if (values[r.name]) { let m = 0; for (const v of values[r.name]) m = Math.max(m, Math.abs(v)); s[r.name] = m || 1; s[`${r.name}:signed`] = values[r.name].some((v) => v < 0); }
     }
     if (values.__input && kind?.kind === 'tokens') s.__input = 1;
     else if (values.__input) { let m = 0; for (const v of values.__input) m = Math.max(m, Math.abs(v)); s.__input = m || 1; s['__input:signed'] = values.__input.some((v) => v < 0); }
     return s;
-  }, [rooms, store, values, pinned]);
+  }, [rooms, store, values, pinned, outKind]);
 
   const out = outs && model ? outs[model.outputName]?.data : null;
   const probs = out && out.length <= 1000 && outKind === 'classes' ? maybeSoftmax(out) : null;
@@ -289,6 +297,8 @@ export default function LabPage() {
   }, [sae, outs, model]);
 
   const onSelect = useCallback((s) => { if (s.room !== '__input') setSelected(s); }, []);
+  // a clamp on an SAE feature belongs to that SAE; retraining or removing it releases the clamp
+  useEffect(() => { setSteer((st) => (st?.sae ? null : st)); }, [sae?.sae]);
   const summaries = useMemo(() => {
     if (!store) return [];
     const out = [];
@@ -1065,8 +1075,9 @@ function SaeCard({ model, rooms, store, sae, setSae, ds, kind, norm, onShow, sae
   };
   const importSae = async (file) => {
     const j = JSON.parse(await file.text());
-    const target = rooms.find((x) => x.name === j.tensor) ?? r;
-    if (!target || target.layout.C !== j.D) { alert(`This SAE expects ${j.D} channels; pick a layer with that many.`); return; }
+    const target = candidates.find((x) => x.name === j.tensor) ?? (r && candidates.includes(r) ? r : null);
+    if (!target) { alert(`This SAE was trained on ${j.tensor ?? 'another layer'}, which is not a room with stored activations here. Add that room, or analyse fewer items so it fits.`); return; }
+    if (target.layout.C !== j.D) { alert(`This SAE expects ${j.D} channels; ${target.label ?? target.name} has ${target.layout.C}.`); return; }
     const s = fromJSON(j);
     const iv = itemVectors(store, target.name);
     const { featureStats } = await import('../../lib/lab/saeLab.js');
@@ -1705,6 +1716,9 @@ function PatchPanel({ model, rooms, pinned, xNow, classes }) {
   const name = (k) => classes?.[k] ?? k;
   const run = async () => {
     setBusy(true);
+    try { await runInner(); } catch (e) { setRes({ error: String(e?.message ?? e) }); } finally { setBusy(false); }
+  };
+  const runInner = async () => {
     const pinnedPred = argmax(pinned.outs[model.outputName].data);
     const base = await model.run([xNow]);
     const nowPred = argmax(base[model.outputName].data);
@@ -1717,12 +1731,12 @@ function PatchPanel({ model, rooms, pinned, xNow, classes }) {
       rows.push({ label: r.label, pred: p.indexOf(Math.max(...p)), pPinned: p[pinnedPred] });
     }
     setRes({ pinnedPred, nowPred, rows });
-    setBusy(false);
   };
   return (
     <div className="relative">
       <Btn onClick={run} disabled={busy}>{busy ? 'Patching...' : 'Patch layers from the pinned input'}</Btn>
-      {res && (
+      {res?.error && <div className="absolute bottom-8 left-0 w-72 rounded border border-red-900 bg-panel p-2 text-[11px] text-red-300">Patching failed: {res.error}</div>}
+      {res && !res.error && (
         <div className="absolute bottom-8 left-0 w-80 rounded-md border border-line bg-panel p-2 text-[11px] text-slate-300 shadow-xl">
           <div className="mb-1">
             Current answer <span className="text-glow">{name(res.nowPred)}</span>, pinned answer <span className="text-warm">{name(res.pinnedPred)}</span>. Copying one layer from the pinned input gives:
@@ -1750,6 +1764,9 @@ function ChannelPatch({ model, room, L, c, pinned, xNow, classes }) {
   const argmax = (a) => Array.from(a).indexOf(Math.max(...a));
   const name = (k) => classes?.[k] ?? k;
   const run = async () => {
+    try { await runInner(); } catch (e) { setRes({ error: String(e?.message ?? e) }); }
+  };
+  const runInner = async () => {
     const src = pinned.outs[room]?.data;
     if (!src) return;
     const base = maybeSoftmax((await model.run([xNow]))[model.outputName].data);
@@ -1761,7 +1778,8 @@ function ChannelPatch({ model, room, L, c, pinned, xNow, classes }) {
   return (
     <div className="rounded-md border border-line p-2 text-[11px] text-slate-300">
       <Btn onClick={run}>Patch this channel from the pinned input</Btn>
-      {res && (
+      {res?.error && <div className="mt-1 text-red-300">Patching failed: {res.error}</div>}
+      {res && !res.error && (
         <div className="mt-1">
           Probability of the pinned answer {name(res.k)}: {(100 * res.before).toFixed(1)}% before, {(100 * res.after).toFixed(1)}% with this channel copied over; the answer is now {name(res.pred)}.
           <Cite id="heimersheim2024" />

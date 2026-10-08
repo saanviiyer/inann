@@ -71,7 +71,8 @@ export class LabModel {
     m.shapes = {};
     for (const [k, v] of Object.entries(out)) m.shapes[k] = v.dims.slice(1);
     m.cands = m.cands.filter((c) => m.shapes[c.name]);
-    m.outputName = summary.outputs[0].name;
+    // the first float output is the one read as the answer (an argmax/label output may come first)
+    m.outputName = (summary.outputs.find((o) => out[o.name] && out[o.name].data instanceof Float32Array) ?? summary.outputs[0]).name;
     const roomNames = defaultRooms(model, m.cands);
     m.allRooms = m.cands.map((c) => m.describe(c.name));
     m.rooms = roomNames.map((n) => m.describe(n));
@@ -126,7 +127,7 @@ export class LabModel {
     const out = {};
     for (const k of Object.keys(parts[0])) {
       const per = parts[0][k].data.length;
-      const data = new Float32Array(per * xs.length);
+      const data = new parts[0][k].data.constructor(per * xs.length);
       parts.forEach((p, i) => data.set(p[k].data, i * per));
       out[k] = { dims: [xs.length, ...parts[0][k].dims.slice(1)], data };
     }

@@ -271,6 +271,11 @@ export default function LabScene({ rooms, values, scales, inputPixels, inputChan
   const saeGeo = useMemo(() => (sae ? { type: 'spheres', n: sae.F, r: Math.min(3.6, Math.max(1.6, 0.1 * Math.sqrt(sae.F) * 2)), size: Math.min(0.12, 2.2 / Math.sqrt(sae.F) / 2.5) } : null), [sae?.F]); // eslint-disable-line
   const saeX = saeIdx >= 0 ? (geos[saeIdx].width ?? ROOM_W) / 2 + 2.2 + saeGeo.r : 0;
 
+  // rebuilt only when a new fly-to is requested, so re-renders (hover, new values) do not restart it
+  const focus = useMemo(
+    () => (focusRoom != null && rooms[focusRoom.i] ? { y: ys[focusRoom.i], width: geos[focusRoom.i].width ?? ROOM_W, nonce: focusRoom.nonce, x: focusRoom.sae && saeIdx >= 0 ? saeX : 0 } : null),
+    [focusRoom?.nonce], // eslint-disable-line
+  );
   let marker = null;
   if (selected) {
     if (selected.sae && saeIdx >= 0) {
@@ -341,7 +346,7 @@ export default function LabScene({ rooms, values, scales, inputPixels, inputChan
       )}
       <OrbitControls makeDefault enableDamping dampingFactor={0.1} />
       <Frame
-        focus={focusRoom != null && rooms[focusRoom.i] ? { y: ys[focusRoom.i], width: geos[focusRoom.i].width ?? ROOM_W, nonce: focusRoom.nonce, x: focusRoom.sae && saeIdx >= 0 ? saeX : 0 } : null}
+        focus={focus}
         height={height} nonce={frameNonce} cx={saeIdx >= 0 ? (saeX + saeGeo.r) / 2 : 0} width={saeIdx >= 0 ? (ROOM_W + saeX + saeGeo.r) / 1.6 : ROOM_W} />
     </Canvas>
   );

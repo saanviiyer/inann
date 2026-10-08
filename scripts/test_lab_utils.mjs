@@ -1,7 +1,7 @@
 // Unit tests for the Lab's data utilities: the .npy reader, the character tokenizer, and the
 // measured summaries and search used to find units.
 import assert from 'node:assert/strict';
-import { parseNpy, textToIds, idsToText, inputKind } from '../src/lib/lab/data.js';
+import { parseNpy, textToIds, idsToText, inputKind, datasetFromNpy } from '../src/lib/lab/data.js';
 import { describeUnit, searchUnits } from '../src/lib/lab/summary.js';
 
 // a hand-built .npy (v1.0, little-endian float32, shape (2, 3))
@@ -46,4 +46,11 @@ assert.deepEqual(searchUnits('three', entries, ['zero', 'one', 'two', 'three']).
 assert.deepEqual(searchUnits('rare', entries).map((e) => e.key), ['b']);
 // a class word must not match the same digit appearing in a count ("7 of top 12")
 assert.deepEqual(searchUnits('7', entries, ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9']).map((e) => e.key), []);
+// integer labels keep their value, so label k lines up with model output k (a 3/7 subset of
+// MNIST must not be renumbered 0/1)
+const ds = datasetFromNpy({ shape: [4, 2], data: new Float32Array(8), dtype: '<f4' }, { data: Float64Array.from([3, 7, 7, 3]) }, { kind: 'vector' });
+assert.deepEqual(ds.labels, [3, 7, 7, 3]);
+assert.equal(ds.classes[7], '7');
+const ds2 = datasetFromNpy({ shape: [2, 2], data: new Float32Array(4), dtype: '<f4' }, { data: Float64Array.from([0.5, 1.5]) }, { kind: 'vector' });
+assert.deepEqual(ds2.labels, [0, 1]); // non-integer labels are ranked
 console.log('OK lab utils');
