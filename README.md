@@ -103,6 +103,8 @@ What you get for any model:
 - **Measured summaries and search.** Every channel and feature gets a one-line summary built only from counts (for example "11 of top 12 are 5 · fires on 40% of items · usually upper left"). The Lab search box matches classes, positions and "rare" or "common" against these summaries; it does not use language-model explanations.
 - **Transformers.** Integer token inputs are tokenized through a `vocab` in the meta file. Attention maps render as one tile per head, and selecting a cell draws arcs from every key token to the query token over the input row.
 - **Gallery** (in the spirit of OpenAI Microscope): every channel or SAE feature of a layer as a card, showing the activation-weighted average of its top items (or its top token string), its measured summary and any explanation. Sort by number, activity or label purity. Dead units stand out: channel 6 of the MNIST CNN's first layer never fires on the 1000 test items.
+- **Report**: per layer, how many units never fire, how many always fire, median label purity and the most label-specific units. In the MNIST CNN, 19 of the 64 units in the last hidden layer never fire on the 1000 test items.
+- **Save image** downloads the current 3D view as a PNG.
 - **Pin and compare.** Freeze one input; every room then shows this input minus the pinned one, so you can see where a 3 and an 8 part ways inside the network.
 - **Occlusion maps** for the answer or any channel (Zeiler and Fergus 2014): forward-only "where does it look".
 - **Sessions.** Save the rooms, settings, SAE and explanations to a JSON file and open them later. Example and URL models reload themselves.
@@ -164,5 +166,5 @@ A dataset `.json` has the form `{shape, labels?, classes?, data}`. `data` is bas
 
 - **No gradients.** ONNX Runtime Web does not provide them, so the Lab has no gradient feature visualization or saliency. The average input stands in for them.
 - **Inputs:** one driven input, which must be float32 or integer token ids. Other inputs are filled the way Hugging Face exports expect: masks with ones, position ids with 0..T-1, the rest with zeros. Symbolic sizes such as the sequence length can be edited in the model card. A tiny BERT classifier export (305 ops, with `attention_mask`) loads and runs. There is no built-in tokenizer for word-piece or BPE vocabularies, so type token ids or supply a character `vocab`.
-- **Storage:** full activations are kept up to 30 million values per room. Larger rooms keep only per-channel summaries, so they cannot host an SAE or a latent view.
+- **Storage:** full activations are kept for at most 40 million values across all rooms, smallest rooms first. Rooms beyond that budget keep only per-channel summaries, so they cannot host an SAE or a latent view; analyse fewer items or choose fewer rooms to make space.
 - **Speed:** everything runs in WebAssembly on one thread. Measured on this development laptop while it was heavily loaded (load average about 90): ResNet-18 at 224x224 took 1.35 s per image and the MNIST CNN 8 ms. Heavy models therefore analyse 100 items by default.

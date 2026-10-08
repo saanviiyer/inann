@@ -431,7 +431,7 @@ export default function LabPage() {
 
       <section className="relative order-1 h-[62vh] min-w-0 shrink-0 overflow-hidden lg:order-2 lg:h-auto lg:flex-1 lg:shrink">
         <div className="absolute left-3 top-3 z-20 flex overflow-hidden rounded-md border border-line text-xs">
-          {[['space', '3D space'], ['gallery', 'Gallery'], ['latent', 'Latent space']].map(([k, t]) => (
+          {[['space', '3D space'], ['gallery', 'Gallery'], ['report', 'Report'], ['latent', 'Latent space']].map(([k, t]) => (
             <button key={k} onClick={() => setView(k)} className={`px-2.5 py-1 ${view === k ? 'bg-glow/15 text-glow' : 'bg-panel text-dim hover:text-slate-200'}`}>{t}</button>
           ))}
         </div>
@@ -447,9 +447,10 @@ export default function LabPage() {
           <LabGallery store={store} rooms={sceneRooms.slice(1)} sae={sae} ds={ds} kind={kind} classes={classes} explFor={explFor}
             onPick={(sel) => setSelected(sel)} selected={selected} />
         )}
+        {view === 'report' && <LabReport store={store} rooms={sceneRooms.slice(1)} summaries={summaries} sae={sae} onPick={(e) => setSelected({ room: e.room, index: e.index, sae: e.sae })} />}
         {view === 'latent' && <LabLatent model={model} store={store} rooms={rooms} sae={sae} outs={outs} ds={ds} setItem={setItem} classes={classes} />}
         <div className="pointer-events-none absolute bottom-3 left-3 rounded bg-black/50 px-2 py-1 text-[11px] text-slate-300">
-          {hover && outs ? <HoverText hover={hover} model={model} outs={outs} saeNow={saeNow} /> : view === 'space' ? 'Drag to orbit, scroll to zoom, click any unit.' : view === 'gallery' ? 'Click a card to open that unit\'s room.' : 'Each mark is one dataset item, placed by PCA of the chosen layer.'}
+          {hover && outs ? <HoverText hover={hover} model={model} outs={outs} saeNow={saeNow} /> : view === 'space' ? 'Drag to orbit, scroll to zoom, click any unit.' : view === 'report' ? 'Every number here is counted from the dataset pass.' : view === 'gallery' ? 'Click a card to open that unit\'s room.' : 'Each mark is one dataset item, placed by PCA of the chosen layer.'}
         </div>
         {summaries.length > 0 && <LabSearch entries={summaries} classes={classes} onPick={(e) => { setView('space'); setSelected({ room: e.room, index: e.index, sae: e.sae }); setFocusRoom({ i: sceneRooms.findIndex((r) => r.name === e.room), sae: e.sae, nonce: Math.random() }); }} />}
         {view === 'space' && sceneRooms.length > 3 && (
@@ -467,6 +468,20 @@ export default function LabPage() {
             )}
             <button onClick={() => { setFocusRoom(null); setFrameNonce((n) => n + 1); }} className="block w-full rounded px-1.5 py-0.5 text-left text-dim hover:text-slate-200">whole model</button>
           </div>
+        )}
+        {view === 'space' && outs && (
+          <button
+            className="absolute bottom-12 right-3 z-20 rounded-md border border-line bg-panel/90 px-2 py-1 text-[11px] text-slate-300 hover:border-glow/40"
+            onClick={(e) => {
+              const cv = e.currentTarget.parentElement.querySelector('canvas');
+              const a = document.createElement('a');
+              a.href = cv.toDataURL('image/png');
+              a.download = `inann_${(model?.fileName ?? 'model').replace(/\.onnx$/, '')}.png`;
+              a.click();
+            }}
+          >
+            Save image
+          </button>
         )}
         {view === 'space' && outs && (
           <div className="absolute bottom-12 left-3 z-20 flex items-center gap-2 rounded-md border border-line bg-panel/90 px-2 py-1 text-[11px] text-slate-300">
@@ -1067,7 +1082,7 @@ function SaeCard({ model, rooms, store, sae, setSae, ds, kind, norm, onShow, sae
         <Cite id="bricken2023" /><Cite id="gao2024" />
       </p>
       {!store && <NotShown>An SAE until a dataset has run; it learns from the layer's activations on that data.</NotShown>}
-      {store && candidates.length === 0 && <NotShown>A layer small enough to train on here (rooms over 30 million stored values are skipped).</NotShown>}
+      {store && candidates.length === 0 && <NotShown>A layer small enough to train on here. Full activations are kept for at most 40 million values across all rooms, smallest rooms first; analyse fewer items or choose fewer rooms to free space.</NotShown>}
       {store && candidates.length > 0 && (
         <>
           <Field label="layer">
@@ -1624,6 +1639,56 @@ function DimsEditor({ model, onDims }) {
         : <span key={i} className="text-slate-300">{d}</span>)}
       <Btn onClick={() => onDims(dims)}>apply</Btn>
       <span className="text-[10px] text-dim">(editable sizes are symbolic in the file)</span>
+    </div>
+  );
+}
+
+// The model at a glance, per layer: how many units never fire, how single-label the units are,
+// and the most label-specific ones. All counted from the dataset pass.
+function LabReport({ store, rooms, summaries, sae, onPick }) {
+  if (!store) return <div className="flex h-full items-center justify-center p-6 text-sm text-dim">Run a dataset first; the report is counted from it.</div>;
+  const groups = [...rooms.filter((r) => store.stats[r.name] && !r.isOutput).map((r) => ({ key: r.name, label: `${r.label} · ${r.dims.join('×')}`, items: summaries.filter((e) => e.room === r.name && !e.sae) })),
+    ...(sae ? [{ key: 'sae', label: `SAE on ${sae.room} (${sae.sae.F} features)`, items: summaries.filter((e) => e.sae), sae: true }] : [])];
+  const acc = store.labels ? store.preds.filter((p, i) => p === store.labels[i]).length / store.N : null;
+  return (
+    <div className="h-full overflow-y-auto scroll-thin p-4 pt-24 text-xs">
+      <div className="mb-3 text-sm text-slate-100">
+        Model report over {store.N} items{acc != null ? `, accuracy ${(100 * acc).toFixed(1)}%` : ''}
+      </div>
+      <div className="space-y-3">
+        {groups.map((g) => {
+          const n = g.items.length;
+          const dead = g.sae ? (sae.sae.F - n) : g.items.filter((e) => e.summary.freq === 0).length;
+          const always = g.items.filter((e) => e.summary.freq >= 0.99).length;
+          const pur = g.items.map((e) => e.summary.purity?.value).filter((v) => v != null);
+          const top = g.items.filter((e) => e.summary.purity).sort((a, b) => b.summary.purity.value - a.summary.purity.value).slice(0, 5);
+          const total = g.sae ? sae.sae.F : n;
+          return (
+            <div key={g.key} className="rounded-lg border border-line p-3">
+              <div className="mb-1 text-slate-100">{g.label}</div>
+              <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 text-slate-300 md:grid-cols-4">
+                <div>never fire: <span className={dead ? 'text-warm' : 'text-glow'}>{dead} of {total}</span></div>
+                <div>fire on 99%+ of items: {always}</div>
+                <div>median top-12 label purity: {pur.length ? median(pur).toFixed(2) : 'n/a'} {pur.length ? <span className="text-dim">(n = {pur.length})</span> : null}</div>
+                <div>fully one label: {pur.filter((v) => v === 1).length}</div>
+              </div>
+              {top.length > 0 && (
+                <div className="mt-2 space-y-0.5">
+                  <div className="text-[10px] uppercase tracking-wide text-dim">most label-specific</div>
+                  {top.map((e) => (
+                    <button key={e.key} onClick={() => onPick(e)} className="block w-full truncate text-left text-[11px] text-slate-300 hover:text-glow">
+                      {e.sae ? `feature ${e.c}` : `channel ${e.c}`}: {e.summary.text}{e.expl ? `  "${e.expl.explanation}"` : ''}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      <p className="mt-3 text-[10px] text-dim">
+        Label purity is the share of a unit's 12 strongest items that carry its most common label; it needs labels and at least 12 active items. It is a rough stand-in for a unit meaning one thing.
+      </p>
     </div>
   );
 }

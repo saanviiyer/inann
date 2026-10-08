@@ -283,7 +283,7 @@ export default function LabScene({ rooms, values, scales, inputPixels, inputChan
   }
 
   return (
-    <Canvas camera={{ position: [9, 9, 13], fov: 42, near: 0.1, far: 500 }} dpr={[1, 2]}>
+    <Canvas camera={{ position: [9, 9, 13], fov: 42, near: 0.1, far: 500 }} dpr={[1, 2]} gl={{ preserveDrawingBuffer: true }}>
       <color attach="background" args={['#05070d']} />
       {rooms.map((r, i) => {
         const g = geos[i];

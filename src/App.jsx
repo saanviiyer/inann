@@ -287,6 +287,12 @@ export default function App() {
               <p className="mt-1 text-slate-300">Transformers, where each word uses attention to choose which other words to read from.<Cite id="vaswani2017" /></p>
             </div>
           )}
+          {chapter === 8 && (
+            <button onClick={() => setArea('lab')} className="w-full rounded-lg border border-glow/40 bg-glow/5 p-3 text-left text-xs text-slate-200 hover:bg-glow/10">
+              <span className="text-[10px] uppercase tracking-[0.2em] text-glow">Your turn</span>
+              <p className="mt-1">Open the Lab to load your own ONNX model, walk through its layers and train a sparse autoencoder on any of them, all in your browser.</p>
+            </button>
+          )}
         </aside>
 
         {/* center: the space */}

@@ -3,18 +3,25 @@
 // are small enough, a robust brightness scale, and the model's predictions.
 import { modelInputOf } from './data.js';
 
-const FULL_LIMIT = 30e6; // floats kept per room at most (~120 MB)
+const FULL_BUDGET = 40e6; // floats of full activations kept across all rooms (~160 MB)
 
 export async function collect(model, ds, kind, norm, rooms, { max = 2000, batch = 32, onProgress } = {}) {
   const N = Math.min(ds.n, max);
   // which dataset items to analyse: all of them, or an even spread (datasets are often sorted by class)
   const dsIndex = Int32Array.from({ length: N }, (_, k) => (N === ds.n ? k : Math.floor((k * ds.n) / N)));
   const stats = {};
+  // full activations go to the smallest rooms first until the budget runs out; the rest keep
+  // per-channel summaries only (enough for rooms, not for an SAE or the latent view)
+  let budget = FULL_BUDGET;
+  const keepFull = new Set();
+  for (const r of [...rooms].sort((a, b) => a.layout.size - b.layout.size)) {
+    if (r.layout.size * N <= budget) { keepFull.add(r.name); budget -= r.layout.size * N; }
+  }
   for (const r of rooms) {
     const L = r.layout;
     stats[r.name] = {
       layout: L, chMax: new Float32Array(N * L.C), chArg: new Int32Array(N * L.C),
-      full: L.size * N <= FULL_LIMIT ? new Float32Array(N * L.size) : null,
+      full: keepFull.has(r.name) ? new Float32Array(N * L.size) : null,
       sample: [], lo: Infinity, hi: -Infinity,
     };
   }
