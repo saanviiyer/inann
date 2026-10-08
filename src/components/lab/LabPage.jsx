@@ -359,7 +359,7 @@ export default function LabPage() {
         </div>
         {summaries.length > 0 && <LabSearch entries={summaries} classes={classes} onPick={(e) => { setView('space'); setSelected({ room: e.room, index: e.index, sae: e.sae }); setFocusRoom({ i: sceneRooms.findIndex((r) => r.name === e.room), sae: e.sae, nonce: Math.random() }); }} />}
         {view === 'space' && sceneRooms.length > 3 && (
-          <div className="absolute right-3 top-14 z-20 max-h-[70%] space-y-px overflow-y-auto scroll-thin rounded-md border border-line bg-panel/80 p-1 text-[10px]">
+          <div className="absolute right-3 top-14 z-20 hidden max-h-[70%] space-y-px overflow-y-auto scroll-thin rounded-md border border-line bg-panel/80 p-1 text-[10px] md:block">
             <div className="px-1 pb-0.5 text-dim">fly to</div>
             {[...sceneRooms.map((r, i) => ({ r, i }))].reverse().map(({ r, i }) => (
               <button key={r.name} onClick={() => setFocusRoom({ i, nonce: Math.random() })} className="block w-full rounded px-1.5 py-0.5 text-left text-slate-300 hover:bg-glow/10 hover:text-glow">
@@ -1210,7 +1210,7 @@ function LabSearch({ entries, classes, onPick }) {
   const [open, setOpen] = useState(false);
   const res = useMemo(() => searchUnits(q, entries, classes), [q, entries, classes]);
   return (
-    <div className="absolute left-3 top-12 z-30 w-72">
+    <div className="absolute left-3 right-3 top-12 z-30 md:right-auto md:w-72">
       <input
         value={q} onChange={(e) => { setQ(e.target.value); setOpen(true); }} onFocus={() => setOpen(true)} onBlur={() => setTimeout(() => setOpen(false), 150)}
         onKeyDown={(e) => { if (e.key === 'Enter' && res[0]) { onPick(res[0]); setOpen(false); } }}

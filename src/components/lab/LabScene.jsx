@@ -153,7 +153,7 @@ function SphereRoom({ geo, data, scale, signed, y, onPick, onHover, x0 = 0, pods
       </instancedMesh>
       {pods && (podLabels || classes) && geo.n <= 64 &&
         Array.from({ length: geo.n }, (_, i) => (
-          <Html key={i} position={[unitPosition(geo, i, 0)[0], 0.55, 0]} center style={{ pointerEvents: 'none' }}>
+          <Html key={i} position={[unitPosition(geo, i, 0)[0], 0.55, 0]} center zIndexRange={[20, 0]} style={{ pointerEvents: 'none' }}>
             <div className={`font-semibold ${podLabels ? 'font-mono text-sm text-glow' : i === pred ? 'text-xs text-warm' : 'text-xs text-slate-400'}`}>
               {String((podLabels ?? classes)[i] ?? i).slice(0, 6)}
             </div>
@@ -295,7 +295,7 @@ export default function LabScene({ rooms, values, scales, inputPixels, inputChan
             {g.type === 'atlas' && <AtlasRoom {...common} onPick={pick} onHover={hov} inputPixels={i === 0 ? inputPixels : null} inputChannels={inputChannels} />}
             {g.type === 'spheres' && <SphereRoom {...common} onPick={pick} onHover={hov} />}
             {g.type === 'pods' && <SphereRoom {...common} onPick={pick} onHover={hov} pods classes={classes} pred={r.isTokens ? -1 : pred} podLabels={r.podLabels} />}
-            <Html position={[-(Math.max(g.width ?? 0, 2 * (g.r ?? 0)) / 2) - 1.2, ys[i], 0]} center style={{ pointerEvents: 'none' }}>
+            <Html position={[-(Math.max(g.width ?? 0, 2 * (g.r ?? 0)) / 2) - 1.2, ys[i], 0]} center zIndexRange={[20, 0]} style={{ pointerEvents: 'none' }}>
               <div className="whitespace-nowrap text-right text-[10px] leading-tight text-dim">
                 <div className="uppercase tracking-[0.14em] text-slate-300">{r.label}</div>
                 <div>{r.dims.join('×')}</div>
@@ -316,7 +316,7 @@ export default function LabScene({ rooms, values, scales, inputPixels, inputChan
             onPick={(idx) => onSelect({ room: sae.room, index: idx, sae: true })}
             onHover={(idx) => onHover(idx == null ? null : { room: sae.room, index: idx, sae: true })}
           />
-          <Html position={[saeX, ys[saeIdx] + 0.9, -saeGeo.r - 0.4]} center style={{ pointerEvents: 'none' }}>
+          <Html position={[saeX, ys[saeIdx] + 0.9, -saeGeo.r - 0.4]} center zIndexRange={[20, 0]} style={{ pointerEvents: 'none' }}>
             <div className="whitespace-nowrap rounded bg-black/50 px-1.5 text-[10px] text-warm">SAE · {sae.F} features · top {sae.k}</div>
           </Html>
         </group>
