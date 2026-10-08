@@ -88,7 +88,9 @@ export default function LabPage() {
   const rightPanel = useRef(null);
 
   // ---------- loading ----------
+  const lastBytes = useRef(null);
   const loadModel = useCallback(async (bytes, m = {}, fileName = 'model.onnx', dataset = null) => {
+    lastBytes.current = { bytes, m, fileName, dataset };
     setError(''); setStatus(`Loading ${fileName}...`);
     setStore(null); setSae(null); setSteer(null); setSelected(null); setOuts(null);
     try {
@@ -409,7 +411,8 @@ export default function LabPage() {
             </ol>
           </details>
         </div>
-        <ModelCard model={model} meta={meta} onFiles={onFiles} onExample={loadExample} onUrl={loadUrl} status={status} error={error} clearError={() => setError('')} onSave={saveSession} pending={!!pendingSession} />
+        <ModelCard model={model} meta={meta} onFiles={onFiles} onExample={loadExample} onUrl={loadUrl} status={status} error={error} clearError={() => setError('')} onSave={saveSession} pending={!!pendingSession}
+          onDims={(dims) => { const L = lastBytes.current; if (L) loadModel(L.bytes, { ...L.m, input: { ...(L.m.input ?? {}), dims } }, L.fileName, L.dataset); }} />
         {model && kind && (
           <InputCard
             model={model} kind={kind} norm={norm} setNorm={setNorm} prep={prep} setPrep={setPrep} pixels={shownPixels} setPixels={setCustom}
@@ -519,7 +522,7 @@ function HoverText({ hover, model, outs, saeNow }) {
 }
 
 // ---------- model ----------
-function ModelCard({ model, meta, onFiles, onExample, onUrl, status, error, clearError, onSave, pending }) {
+function ModelCard({ model, meta, onFiles, onExample, onUrl, status, error, clearError, onSave, pending, onDims }) {
   const [drag, setDrag] = useState(false);
   const [url, setUrl] = useState('');
   const s = model?.summary;
@@ -561,6 +564,12 @@ function ModelCard({ model, meta, onFiles, onExample, onUrl, status, error, clea
           <div className="text-[10px] text-dim">
             {Object.entries(s.opCounts).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k}×${v}`).join('  ')}
           </div>
+          {model.symbolic?.some(Boolean) && <DimsEditor model={model} onDims={onDims} />}
+          {model.extraInputs?.length > 0 && (
+            <div className="text-[10px] text-dim">
+              Other inputs ({model.extraInputs.map((i) => i.name).join(', ')}) are filled automatically: masks with ones, position ids with 0, 1, 2, ..., the rest with zeros.
+            </div>
+          )}
         </div>
       )}
       {model && (
@@ -1600,6 +1609,21 @@ function LabGallery({ store, rooms, sae, ds, kind, classes, explFor, onPick, sel
         })}
       </div>
       {cards.length > limit && <div className="mt-3 text-center"><Btn onClick={() => setLimit((l) => l + 96)}>show more ({cards.length - limit} left)</Btn></div>}
+    </div>
+  );
+}
+
+// Models with symbolic sizes (e.g. a sequence length) need a concrete value to run.
+function DimsEditor({ model, onDims }) {
+  const [dims, setDims] = useState(model.inputDims);
+  return (
+    <div className="flex flex-wrap items-center gap-1 text-[11px]">
+      <span className="text-dim">input size</span>
+      {dims.map((d, i) => model.symbolic[i]
+        ? <input key={i} type="number" min={1} value={d} onChange={(e) => setDims(dims.map((x, j) => (j === i ? Math.max(1, +e.target.value) : x)))} className={`${selectCls} w-14`} />
+        : <span key={i} className="text-slate-300">{d}</span>)}
+      <Btn onClick={() => onDims(dims)}>apply</Btn>
+      <span className="text-[10px] text-dim">(editable sizes are symbolic in the file)</span>
     </div>
   );
 }

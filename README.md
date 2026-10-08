@@ -163,6 +163,6 @@ A dataset `.json` has the form `{shape, labels?, classes?, data}`. `data` is bas
 ### Limits, stated plainly
 
 - **No gradients.** ONNX Runtime Web does not provide them, so the Lab has no gradient feature visualization or saliency. The average input stands in for them.
-- **Inputs:** one driven input; any other inputs get zeros. Inputs must be float32 or integer token ids.
+- **Inputs:** one driven input, which must be float32 or integer token ids. Other inputs are filled the way Hugging Face exports expect: masks with ones, position ids with 0..T-1, the rest with zeros. Symbolic sizes such as the sequence length can be edited in the model card. A tiny BERT classifier export (305 ops, with `attention_mask`) loads and runs. There is no built-in tokenizer for word-piece or BPE vocabularies, so type token ids or supply a character `vocab`.
 - **Storage:** full activations are kept up to 30 million values per room. Larger rooms keep only per-channel summaries, so they cannot host an SAE or a latent view.
 - **Speed:** everything runs in WebAssembly on one thread. Measured on this development laptop while it was heavily loaded (load average about 90): ResNet-18 at 224x224 took 1.35 s per image and the MNIST CNN 8 ms. Heavy models therefore analyse 100 items by default.

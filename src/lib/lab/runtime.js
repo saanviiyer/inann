@@ -54,7 +54,7 @@ export class LabModel {
     // float32 inputs (images, vectors) and integer token ids (int64 / int32) are supported
     const TYPES = { 1: 'float32', 7: 'int64', 6: 'int32' };
     if (input.elem && !TYPES[input.elem]) throw new Error(`the first input has ONNX element type ${input.elem}; supported: float32, int64 and int32 token ids`);
-    if (summary.inputs.length > 1) console.warn('inann: the model has several inputs; only the first is driven, the others get zeros');
+    if (summary.inputs.length > 1) console.warn('inann: the model has several inputs; only the first is driven (masks get ones, positions 0..T-1, others zeros)');
     const cands = candidateTensors(model, summary);
     const { session, kept } = await createWithRetry(model, cands.map((c) => c.name));
     const m = new LabModel();
@@ -63,6 +63,7 @@ export class LabModel {
     m.cands = cands.filter((c) => kept.includes(c.name));
     m.batchable = typeof input.dims[0] === 'string' || input.dims[0] == null || input.dims[0] <= 0;
     // symbolic dims beyond the batch need a value; meta.input.dims can supply them, else 16
+    m.symbolic = input.dims.slice(1).map((d) => !(typeof d === 'number' && d > 0));
     m.inputDims = input.dims.slice(1).map((d, i) => (typeof d === 'number' && d > 0 ? d : meta.input?.dims?.[i] ?? 16));
     m.inputSize = m.inputDims.reduce((a, b) => a * b, 1);
     // one pass on zeros to learn every tensor's shape
@@ -99,11 +100,20 @@ export class LabModel {
       }
       return new ort.Tensor(this.inputType, data, [B, ...this.inputDims]);
     };
-    // any further inputs get zeros of their declared shape (batch-sized)
+    // further inputs, filled the way Hugging Face exports expect: attention masks with ones,
+    // position ids with 0..T-1, everything else (token type ids, ...) with zeros. Symbolic dims
+    // take the main input's sizes where they line up.
     const extraZeros = (B) => Object.fromEntries((this.extraInputs ?? []).map((inp) => {
-      const dims = inp.dims.map((d, i) => (i === 0 ? B : typeof d === 'number' && d > 0 ? d : 1));
+      const dims = inp.dims.map((d, i) => (i === 0 ? B : typeof d === 'number' && d > 0 ? d : this.inputDims[i - 1] ?? 1));
       const n = dims.reduce((a, b) => a * b, 1);
-      const t = inp.elem === 7 ? new ort.Tensor('int64', new BigInt64Array(n), dims) : new ort.Tensor('float32', new Float32Array(n), dims);
+      const nm = inp.name.toLowerCase();
+      const per = n / B, last = dims[dims.length - 1];
+      const fill = (j) => (nm.includes('mask') ? 1 : nm.includes('position') ? j % last : 0);
+      const t = inp.elem === 7
+        ? new ort.Tensor('int64', BigInt64Array.from({ length: n }, (_, j) => BigInt(fill(j % per))), dims)
+        : inp.elem === 6
+          ? new ort.Tensor('int32', Int32Array.from({ length: n }, (_, j) => fill(j % per)), dims)
+          : new ort.Tensor('float32', Float32Array.from({ length: n }, (_, j) => fill(j % per)), dims);
       return [inp.name, t];
     }));
     if (this.batchable || xs.length === 1) {
