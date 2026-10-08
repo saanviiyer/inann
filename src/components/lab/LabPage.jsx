@@ -296,8 +296,11 @@ export default function LabPage() {
   const saeLayout = useMemo(() => {
     if (!sae) return null;
     const { F, D, Wd } = sae.sae;
+    // on the main thread, so keep it cheap: two components, few iterations, and the plain spiral
+    // for very large dictionaries
+    if (F * D > 600000) return null;
     const rows = Array.from({ length: F }, (_, f) => Wd.subarray(f * D, (f + 1) * D));
-    const P = pcaOf(rows);
+    const P = pcaOf(rows, { k: 2, iters: 40 });
     const out = new Float32Array(F * 2);
     let m = 0;
     for (const q of P.pts) m = Math.max(m, Math.hypot(q[0], q[1]));
@@ -437,12 +440,16 @@ export default function LabPage() {
       { title: 'Follow the answer down', text: 'The warm path follows the strongest positive contribution from the answer down to the input, one layer at a time.', run: () => { setSteer(null); setTraceOn(true); setFocusRoom(null); setFrameNonce((n) => n + 1); } },
     );
     steps.push(
-      { title: 'Every unit at once', text: 'The gallery shows each unit of a layer as the average of the items it fires on most, sorted by how single-labelled they are.', run: () => { setTraceOn(false); setView('gallery'); } },
+      { title: 'Every unit at once', text: 'The gallery shows each unit of a layer as the average of the items it fires on most, sorted by how single-labelled they are.', run: () => { setSteer(null); setTraceOn(false); setView('gallery'); } },
       { title: 'Latent space', text: 'Every dataset item placed by how a layer represents it. Your input is the orange point.', run: () => setView('latent') },
       { title: 'Your turn', text: 'Train a sparse autoencoder on any layer in the panel on the right; its features dock beside the layer. Then drop in your own .onnx model.', run: () => { setView('space'); setGuide(null); } },
     );
     return steps;
   }, [model, store, sceneRooms, summaries, kind, outKind]); // eslint-disable-line
+
+  // a new model or dataset pass ends the walk-through; its steps belonged to the old one
+  useEffect(() => { setGuide(null); }, [model, store]);
+  useEffect(() => { if (guide != null && guide >= guideSteps.length) setGuide(null); }, [guide, guideSteps.length]);
 
   // keyboard: arrows step through dataset items, P pins or unpins, Esc closes the room
   useEffect(() => {
@@ -1962,7 +1969,7 @@ function SweepChart({ res, onPick }) {
 
 // One row per channel / SAE feature with its measured statistics, for analysis elsewhere.
 function downloadCsv(summaries) {
-  const q = (v) => (v == null ? '' : /[",\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v));
+  const q = (v) => (v == null ? '' : /[",\r\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v));
   const rows = [['layer', 'tensor', 'kind', 'index', 'fires_on_fraction', 'top12_label', 'top12_purity', 'summary', 'explanation', 'explanation_score']];
   for (const e of summaries) {
     rows.push([e.roomLabel, e.room, e.sae ? 'sae_feature' : 'channel', e.c, e.summary.freq.toFixed(4), e.className ?? '', e.summary.purity ? e.summary.purity.value.toFixed(3) : '', e.summary.text, e.expl?.explanation ?? '', e.expl ? e.expl.score : '']);

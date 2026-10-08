@@ -15,7 +15,7 @@ export const LATENT_LAYERS = [
 
 // Top-3 principal components by power iteration on X^T X, never forming the D x D matrix.
 // Stops early once a component stops moving.
-export function pcaOf(X) {
+export function pcaOf(X, { k: K = 3, iters = 150 } = {}) {
   const N = X.length, D = X[0].length;
   const mean = new Float64Array(D);
   for (const x of X) for (let j = 0; j < D; j++) mean[j] += x[j] / N;
@@ -23,10 +23,10 @@ export function pcaOf(X) {
   let total = 0;
   for (const c of C) for (const v of c) total += v * v;
   const comps = [], vars = [];
-  for (let k = 0; k < 3; k++) {
+  for (let k = 0; k < K; k++) {
     let v = Float64Array.from({ length: D }, (_, j) => Math.sin(1 + j * (k + 1.3)));
     let lam = 0;
-    for (let it = 0; it < 150; it++) {
+    for (let it = 0; it < iters; it++) {
       const w = new Float64Array(D);
       for (const c of C) {
         let s = 0;
