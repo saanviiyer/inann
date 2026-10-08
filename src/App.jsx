@@ -83,7 +83,12 @@ const firstSeven = DIGITS[LABELS.indexOf(7)];
 export default function App() {
   const [chapter, setChapter] = useState(1);
   const [area, setArea] = useState(() => (typeof location !== 'undefined' && location.hash === '#lab' ? 'lab' : 'tour'));
-  useEffect(() => { try { history.replaceState(null, '', area === 'lab' ? '#lab' : '#'); } catch { /* ignore */ } }, [area]);
+  useEffect(() => { try { history.replaceState(null, '', `${location.pathname}${location.search}${area === 'lab' ? '#lab' : ''}`); } catch { /* ignore */ } }, [area]);
+  useEffect(() => {
+    const onHash = () => setArea(location.hash === '#lab' ? 'lab' : 'tour');
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
+  }, []);
   const [x, setXRaw] = useState(() => Float32Array.from(firstSeven));
   const [drawKey, setDrawKey] = useState(0);
   const [occ, setOcc] = useState({ on: false, size: 2, pos: 0 });

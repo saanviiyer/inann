@@ -15,9 +15,8 @@ export function makeSae(D, F, k, seed = 1) {
 }
 
 // Encode one vector; returns {idx, val} of the active features.
-export function encode(sae, x, pre = new Float32Array(sae.F)) {
+export function encode(sae, x, pre = new Float32Array(sae.F), xc = new Float32Array(sae.D)) {
   const { D, F, k, We, be, bd, mu, s } = sae;
-  const xc = new Float32Array(D);
   for (let j = 0; j < D; j++) xc[j] = (x[j] - mu[j]) / s - bd[j];
   for (let f = 0; f < F; f++) {
     let v = be[f];

@@ -27,6 +27,7 @@ self.onmessage = (e) => {
   const V = P.map((p) => new Float32Array(p.length));
   const lastFired = new Int32Array(F);
   const pre = new Float32Array(F);
+  const xcBuf = new Float32Array(D), rec = new Float32Array(D), d = new Float32Array(D);
   const b1 = 0.9, b2 = 0.999, eps = 1e-8;
 
   const evalTest = () => {
@@ -45,11 +46,10 @@ self.onmessage = (e) => {
     let loss = 0;
     for (let b = 0; b < batch; b++) {
       const x = row(train[Math.floor(rnd() * train.length)]);
-      const { idx, val, xc } = encode(sae, x, pre);
-      // reconstruction in standardized units
-      const rec = Float32Array.from(sae.bd);
-      idx.forEach((f, t) => { const o = f * D; for (let j = 0; j < D; j++) rec[j] += val[t] * sae.Wd[o + j]; });
-      const d = new Float32Array(D);
+      const { idx, val, xc } = encode(sae, x, pre, xcBuf);
+      // reconstruction in standardized units (buffers reused across samples)
+      rec.set(sae.bd);
+      for (let t = 0; t < idx.length; t++) { const o = idx[t] * D, a = val[t]; for (let j = 0; j < D; j++) rec[j] += a * sae.Wd[o + j]; }
       for (let j = 0; j < D; j++) { const tgt = (x[j] - sae.mu[j]) / sae.s; d[j] = (rec[j] - tgt) * (2 / batch); loss += (rec[j] - tgt) ** 2 / batch; }
       for (let j = 0; j < D; j++) G[3][j] += d[j];
       idx.forEach((f, t) => {
