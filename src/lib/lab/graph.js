@@ -208,7 +208,7 @@ export function linearSource(model, tensor) {
     if (!n) return null;
     if (n.op_type === 'Conv' && inits.has(n.input[1])) {
       const w = initializerArray(model, n.input[1]);
-      return w && { op: 'Conv', ...w, group: num(n.attribute.find((a) => a.name === 'group')?.i) || 1 };
+      return w && { op: 'Conv', ...w, group: num(n.attribute.find((a) => a.name === 'group')?.i) || 1, input: n.input[0] };
     }
     if (n.op_type === 'Gemm' && inits.has(n.input[1])) {
       const w = initializerArray(model, n.input[1]);
@@ -251,4 +251,22 @@ export function preFlattenTensor(model, name) {
     t = n.input[0];
   }
   return t;
+}
+
+// The room a linear op reads from: walk its input back through pooling, activations, reshapes and
+// normalization until reaching one of the given room tensors. Returns { room, pooled } or null.
+const THROUGH = new Set(['MaxPool', 'AveragePool', 'Flatten', 'Reshape', 'Identity', 'Dropout', 'BatchNormalization', ...ACTIVATIONS]);
+export function sourceRoom(model, tensor, roomNames) {
+  const producer = {};
+  model.graph.node.forEach((n) => n.output.forEach((o) => (producer[o] = n)));
+  const rooms = new Set(roomNames);
+  let t = tensor, pooled = false;
+  for (let hop = 0; hop < 8; hop++) {
+    if (rooms.has(t)) return { room: t, pooled };
+    const n = producer[t];
+    if (!n || !THROUGH.has(n.op_type)) return null;
+    if (n.op_type === 'MaxPool' || n.op_type === 'AveragePool') pooled = true;
+    t = n.input[0];
+  }
+  return null;
 }

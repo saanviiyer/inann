@@ -264,7 +264,7 @@ function Frame({ height, nonce, cx = 0, width = ROOM_W, focus }) {
 
 // rooms: [{name, op, dims, layout, isOutput, label}]; values: {name: Float32Array without batch}
 // sae: {room, F, featNow: Float32Array(F), scale} or null
-export default function LabScene({ rooms, values, scales, inputPixels, inputChannels, classes, pred, selected, onSelect, onHover, sae, frameNonce, focusRoom }) {
+export default function LabScene({ rooms, values, scales, inputPixels, inputChannels, classes, pred, selected, onSelect, onHover, sae, frameNonce, focusRoom, edges }) {
   const geos = useMemo(() => rooms.map((r, i) => roomGeometry(r, i === 0)), [rooms]);
   const ys = rooms.map((_, i) => i * GAP);
   const height = (rooms.length - 1) * GAP;
@@ -328,6 +328,23 @@ export default function LabScene({ rooms, values, scales, inputPixels, inputChan
         </group>
       )}
       {marker && <Marker {...marker} />}
+      {marker && edges && (() => {
+        // incoming edges: from the feeding units (or channel tiles) of the room below to the selection
+        const k = rooms.findIndex((r) => r.name === edges.fromRoom);
+        if (k < 0) return null;
+        const g = geos[k], L = rooms[k].layout;
+        const pos = (e) => {
+          if (edges.perChannel && L.kind === 'spatial') {
+            if (g.type !== 'atlas') return unitPosition(g, e.k, ys[k]);
+            // centre of channel tile e.k (the input picture is a single tile)
+            const t = rooms[k].isInputRoom ? 0 : e.k;
+            const ax = (t % g.cols) * (g.tW + g.pad) + g.tW / 2, ay = Math.floor(t / g.cols) * (g.tH + g.pad) + g.tH / 2;
+            return [ax * g.px - g.width / 2, ys[k] + 0.05, ay * g.px - g.depth / 2];
+          }
+          return unitPosition(g, Math.min(e.k, L.size - 1), ys[k]);
+        };
+        return <Beams from={marker.pos} targets={edges.edges.map((e) => ({ pos: pos(e), w: e.v }))} />;
+      })()}
       {(() => {
         // attention arcs when a cell of a [heads, T, T] map is selected and the input is a token row
         if (!selected || selected.sae || !rooms[0]?.isTokens) return null;

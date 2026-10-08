@@ -107,6 +107,7 @@ What you get for any model:
     - neuron and feature label purity
   - You can download the SAE as JSON and load it again later.
 - **Latent space** of any stored layer, or of the SAE's features, as a PCA cloud. It also shows full-space nearest-neighbour accuracy and the spacing ratio.
+- **Glowing incoming edges** for any unit, as in the Tour. They show weight times the activation it multiplies on the current input, per input channel for conv maps, and run from the room below to the selection. A test checks they are exact: summed over all inputs and plus the bias, they reproduce every unit's pre-activation in the MNIST CNN, MNIST MLP and CIFAR CNN.
 - **Incoming weights** for any unit, read from the model file. Conv kernels appear one tile per input channel. A dense layer's weights are laid out like the tensor it read: an MLP's first layer shows the 28x28 picture each neuron weighs.
 - **"What does it control?"** clamps a channel or feature on 100 items, spread evenly over the dataset, and counts how the answer moves, with selectivity. In the MNIST CNN, a channel whose top items are mostly 7s turns other digits into 5s when clamped high, with low selectivity. That is why responses and causes are both shown.
 - **Measured summaries and search.** Every channel and feature gets a one-line summary built only from counts (for example "11 of top 12 are 5 · fires on 40% of items · usually upper left"). The Lab search box matches classes, positions and "rare" or "common" against these summaries; it does not use language-model explanations.

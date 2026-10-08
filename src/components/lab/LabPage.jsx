@@ -19,6 +19,7 @@ import { PixelGrid } from '../ui.jsx';
 import { describeUnit, searchUnits } from '../../lib/lab/summary.js';
 import { ScoreBadge } from '../FeatureRoom.jsx';
 import { occlusionMap, readClassProb, readChannelMax } from '../../lib/lab/occlusion.js';
+import { unitEdges } from '../../lib/lab/edges.js';
 import { pcaOf, knnAccOf, separationOf } from '../../lib/latent.js';
 
 const BASE = import.meta.env.BASE_URL;
@@ -298,6 +299,14 @@ export default function LabPage() {
   }, [sae, outs, model]);
 
   const onSelect = useCallback((s) => { if (s.room !== '__input') setSelected(s); }, []);
+  // incoming edges of the selected unit on the current input (none for SAE features)
+  const edges = useMemo(() => {
+    if (!selected || selected.sae || !outs || !model) return null;
+    try {
+      const r = model.describe(selected.room);
+      return unitEdges(model, roomNames, outs, selected.room, selected.index, r.layout, xFinal);
+    } catch { return null; }
+  }, [selected, outs, model, roomNames, xFinal]);
   // a clamp on an SAE feature belongs to that SAE; retraining or removing it releases the clamp
   useEffect(() => { setSteer((st) => (st?.sae ? null : st)); }, [sae?.sae]);
   const summaries = useMemo(() => {
@@ -464,7 +473,7 @@ export default function LabPage() {
           <Boundary>
             <LabScene
               rooms={sceneRooms} values={values} scales={scales} inputPixels={kind?.kind === 'image' ? shownPixels : null} inputChannels={kind?.C}
-              classes={classes} pred={pred} selected={selected} onSelect={onSelect} onHover={onHover} sae={saeNow} frameNonce={frameNonce} focusRoom={focusRoom}
+              classes={classes} pred={pred} selected={selected} onSelect={onSelect} onHover={onHover} sae={saeNow} frameNonce={frameNonce} focusRoom={focusRoom} edges={edges}
             />
           </Boundary>
         )}
@@ -535,7 +544,7 @@ export default function LabPage() {
       <aside ref={rightPanel} className="scroll-thin order-3 w-full shrink-0 space-y-3 border-line p-4 lg:w-[23rem] lg:overflow-y-auto lg:border-l">
         <Boundary key={selected ? `${selected.room}:${selected.index}:${!!selected.sae}` : 'none'}>
           <UnitCard
-            model={model} sel={selected} outs={outs} baseOuts={baseOuts} rooms={sceneRooms} onPick={onSelect} norm={norm} explFor={explFor} pixelsNow={shownPixels} rawNow={useItem && !!ds?.raw} outKind={outKind} pinnedNow={pinned} xNow={xFinal} store={store} ds={ds} kind={kind} sae={sae} saeNow={saeNow}
+            model={model} sel={selected} outs={outs} baseOuts={baseOuts} rooms={sceneRooms} onPick={onSelect} norm={norm} explFor={explFor} pixelsNow={shownPixels} rawNow={useItem && !!ds?.raw} outKind={outKind} pinnedNow={pinned} xNow={xFinal} edges={edges} store={store} ds={ds} kind={kind} sae={sae} saeNow={saeNow}
             steer={steer} setSteer={setSteer} classes={classes} onClose={() => setSelected(null)} setItem={setItem}
             onPickFeature={(f) => setSelected({ room: sae.room, index: f, sae: true })}
           />
@@ -858,7 +867,7 @@ function UnitPicker({ model, rooms, onPick }) {
   );
 }
 
-function UnitBody({ model, sel, outs, baseOuts, store, ds, kind, norm, sae, saeNow, steer, setSteer, classes, onClose, setItem, onPickFeature, explFor, pixelsNow, rawNow, outKind, pinnedNow, xNow }) {
+function UnitBody({ model, sel, outs, baseOuts, store, ds, kind, norm, sae, saeNow, steer, setSteer, classes, onClose, setItem, onPickFeature, explFor, pixelsNow, rawNow, outKind, pinnedNow, xNow, edges }) {
   const r = model.describe(sel.room);
   const L = r.layout;
   const isFeat = !!sel.sae;
@@ -962,6 +971,21 @@ function UnitBody({ model, sel, outs, baseOuts, store, ds, kind, norm, sae, saeN
           target={readChannelMax(sel.room, L, c)} deps={[pixelsNow, sel.room, c]} raw={rawNow} />
       )}
       {!isFeat && pinnedNow && <ChannelPatch model={model} room={sel.room} L={L} c={c} pinned={pinnedNow} xNow={xNow} classes={classes} />}
+      {!isFeat && edges?.edges?.length > 0 && (
+        <div className="rounded-md border border-line p-2 text-[11px] text-slate-300">
+          <div className="text-xs text-slate-200">What feeds it on this input</div>
+          <div className="mt-0.5">
+            {edges.edges.slice(0, 6).map((e) => (
+              <span key={e.k} className={`mr-2 ${e.v >= 0 ? 'text-warm' : 'text-cool'}`}>
+                {edges.perChannel ? 'ch' : '#'}{e.k} {e.v >= 0 ? '+' : ''}{e.v.toFixed(2)}
+              </span>
+            ))}
+          </div>
+          <div className="mt-0.5 text-[10px] text-dim">
+            Weight times the activation it multiplies, {edges.perChannel ? 'summed per input channel' : 'per input'}; the glowing edges in the space show the same{edges.exact ? '' : ' (approximate: a strided conv, so weight sum times channel mean)'}. Biases not included.
+          </div>
+        </div>
+      )}
       {!isFeat && <Weights model={model} room={sel.room} c={c} />}
       {!isFeat && kind.kind === 'tokens' && r.op === 'Softmax' && L.kind === 'spatial' && L.H === kind.T && (
         <div className="rounded-md border border-line p-2 text-[11px] text-slate-300">
