@@ -179,3 +179,76 @@ export function badOutputsFromError(msg) {
   while ((m = re.exec(msg))) names.add(m[1] ?? m[4]);
   return names.size ? [...names] : null;
 }
+
+// ---------- weights ----------
+// Float32 contents of an initializer (raw_data or float_data).
+export function initializerArray(model, name) {
+  const t = model.graph.initializer.find((i) => i.name === name);
+  if (!t || t.data_type !== ELEM.FLOAT) return null;
+  const dims = t.dims.map(num);
+  let data;
+  if (t.raw_data && t.raw_data.length) {
+    const b = t.raw_data;
+    data = new Float32Array(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength));
+  } else data = Float32Array.from(t.float_data ?? []);
+  return { dims, data };
+}
+
+// Walk back from a tensor through activations, normalizations, bias adds and reshapes to the
+// linear op that produced it, and return that op's weights. Null if there is none.
+const PASS = new Set([...ACTIVATIONS, 'BatchNormalization', 'Identity', 'Dropout']);
+export function linearSource(model, tensor) {
+  const g = model.graph;
+  const inits = new Set(g.initializer.map((i) => i.name));
+  const producer = {};
+  g.node.forEach((n) => n.output.forEach((o) => (producer[o] = n)));
+  let t = tensor;
+  for (let hop = 0; hop < 6; hop++) {
+    const n = producer[t];
+    if (!n) return null;
+    if (n.op_type === 'Conv' && inits.has(n.input[1])) {
+      const w = initializerArray(model, n.input[1]);
+      return w && { op: 'Conv', ...w, group: num(n.attribute.find((a) => a.name === 'group')?.i) || 1 };
+    }
+    if (n.op_type === 'Gemm' && inits.has(n.input[1])) {
+      const w = initializerArray(model, n.input[1]);
+      const transB = num(n.attribute.find((a) => a.name === 'transB')?.i) === 1;
+      return w && { op: 'Gemm', ...w, transB, input: n.input[0] };
+    }
+    if (n.op_type === 'MatMul' && inits.has(n.input[1])) {
+      const w = initializerArray(model, n.input[1]);
+      return w && { op: 'MatMul', ...w, transB: false, input: n.input[0] };
+    }
+    if (n.op_type === 'Add') { const other = n.input.find((x) => !inits.has(x)); if (!other || n.input.every((x) => !inits.has(x))) return null; t = other; continue; }
+    if (PASS.has(n.op_type)) { t = n.input[0]; continue; }
+    return null;
+  }
+  return null;
+}
+
+// The incoming weights of output channel c: a conv kernel [Cin/group, kh, kw] or a weight row.
+export function incomingWeights(src, c) {
+  if (!src) return null;
+  if (src.op === 'Conv') {
+    const [, cin, kh, kw] = src.dims;
+    const per = cin * kh * kw;
+    return { kind: 'kernel', cin, kh, kw, data: src.data.subarray(c * per, (c + 1) * per) };
+  }
+  const [a, b] = src.dims;
+  // Gemm with transB: W is [out, in]; MatMul and plain Gemm: W is [in, out]
+  if (src.transB) return { kind: 'row', data: src.data.subarray(c * b, (c + 1) * b) };
+  return { kind: 'row', data: Float32Array.from({ length: a }, (_, i) => src.data[i * b + c]) };
+}
+
+// The shape a dense layer's input had before it was flattened, so weights can be laid out like it.
+export function preFlattenTensor(model, name) {
+  const producer = {};
+  model.graph.node.forEach((n) => n.output.forEach((o) => (producer[o] = n)));
+  let t = name;
+  for (let hop = 0; hop < 4; hop++) {
+    const n = producer[t];
+    if (!n || !['Flatten', 'Reshape', 'Identity'].includes(n.op_type)) return t;
+    t = n.input[0];
+  }
+  return t;
+}

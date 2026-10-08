@@ -14,6 +14,8 @@ import {
 import { collect, channelActs, topItems, histogramOf, labelPurity } from '../../lib/lab/store.js';
 import { itemVectors, sampleRows, featuresNow, saeTransform, neuronTransform } from '../../lib/lab/saeLab.js';
 import { toJSON, fromJSON } from '../../lib/lab/saeCore.js';
+import { linearSource, incomingWeights, preFlattenTensor } from '../../lib/lab/graph.js';
+import { PixelGrid } from '../ui.jsx';
 import { pcaOf, knnAccOf, separationOf } from '../../lib/latent.js';
 
 const BASE = import.meta.env.BASE_URL;
@@ -321,7 +323,7 @@ export default function LabPage() {
       <aside ref={rightPanel} className="scroll-thin order-3 w-full shrink-0 space-y-3 border-line p-4 lg:w-[23rem] lg:overflow-y-auto lg:border-l">
         <Boundary key={selected ? `${selected.room}:${selected.index}:${!!selected.sae}` : 'none'}>
           <UnitCard
-            model={model} sel={selected} outs={outs} baseOuts={baseOuts} store={store} ds={ds} kind={kind} sae={sae} saeNow={saeNow}
+            model={model} sel={selected} outs={outs} baseOuts={baseOuts} rooms={sceneRooms} onPick={onSelect} store={store} ds={ds} kind={kind} sae={sae} saeNow={saeNow}
             steer={steer} setSteer={setSteer} classes={classes} onClose={() => setSelected(null)} setItem={setItem}
             onPickFeature={(f) => setSelected({ room: sae.room, index: f, sae: true })}
           />
@@ -587,14 +589,32 @@ function RoomsCard({ model, roomNames, setRoomNames }) {
 
 // ---------- one unit's room ----------
 function UnitCard(props) {
-  if (!props.model || !props.sel) {
-    return (
-      <div className="rounded-lg border border-line p-3 text-sm text-slate-300">
-        Click any unit in the space to open its room. Rooms fill in once a dataset has run.
-      </div>
-    );
-  }
+  if (!props.model || !props.sel) return <UnitPicker {...props} />;
   return <UnitBody {...props} />;
+}
+
+// Open a room without hunting for a tiny sphere: pick a layer and a channel number.
+function UnitPicker({ model, rooms, onPick }) {
+  const [room, setRoom] = useState('');
+  const [c, setC] = useState(0);
+  const list = (rooms ?? []).filter((r) => !r.isInputRoom);
+  const r = list.find((x) => x.name === room) ?? list[0];
+  return (
+    <div className="space-y-2 rounded-lg border border-line p-3 text-sm text-slate-300">
+      <div>Click any unit in the space to open its room, or pick one here. Rooms fill in once a dataset has run.</div>
+      {r && (
+        <div className="flex flex-wrap items-center gap-1.5 text-xs">
+          <select value={r.name} onChange={(e) => { setRoom(e.target.value); setC(0); }} className={selectCls}>
+            {list.map((x) => <option key={x.name} value={x.name}>{x.label}</option>)}
+          </select>
+          <span className="text-dim">channel</span>
+          <input type="number" min={0} max={r.layout.C - 1} value={c} onChange={(e) => setC(Math.max(0, Math.min(r.layout.C - 1, +e.target.value)))} className={`${selectCls} w-16`} />
+          <span className="text-dim">of {r.layout.C}</span>
+          <Btn onClick={() => onPick({ room: r.name, index: r.layout.idx(c, 0) })}>Open</Btn>
+        </div>
+      )}
+    </div>
+  );
 }
 
 function UnitBody({ model, sel, outs, baseOuts, store, ds, kind, sae, saeNow, steer, setSteer, classes, onClose, setItem, onPickFeature }) {
@@ -684,6 +704,7 @@ function UnitBody({ model, sel, outs, baseOuts, store, ds, kind, sae, saeNow, st
         </div>
       )}
 
+      {!isFeat && <Weights model={model} room={sel.room} c={c} />}
       {!isFeat && sae && sae.room === sel.room && <WrittenBy sae={sae} c={c} onPick={(f) => onPickFeature?.(f)} />}
       <div className="space-y-1.5 rounded-md border border-line p-2">
         <div className="flex items-center justify-between text-xs">
@@ -1045,6 +1066,67 @@ function TokenThumb({ ids, kind, pos }) {
       {Array.from(ids).map((v, j) => (
         <span key={j} className={j === pos ? 'rounded-sm bg-warm/80 text-black' : ''}>{kind.vocab ? kind.vocab[v] ?? '?' : `${v} `}</span>
       ))}
+    </div>
+  );
+}
+
+// Incoming weights of a channel, read from the model file: a conv kernel per input channel, or
+// one weight per input for a dense layer. Orange is positive, blue negative.
+function Weights({ model, room, c }) {
+  const { w, shape } = useMemo(() => {
+    const src = linearSource(model.model, room);
+    const w = incomingWeights(src, c);
+    let shape = null;
+    if (w?.kind === 'row' && src.input) {
+      // lay a dense layer's weights out like the tensor it read, before flattening
+      const t = preFlattenTensor(model.model, src.input);
+      const dims = t === model.input.name ? model.inputDims : model.shapes[t];
+      if (dims && dims.reduce((a, b) => a * b, 1) === w.data.length) {
+        if (dims.length === 3) shape = { C: dims[0], H: dims[1], W: dims[2] };
+        else if (dims.length === 1 && t === model.input.name) { const sq = Math.round(Math.sqrt(dims[0])); if (sq * sq === dims[0]) shape = { C: 1, H: sq, W: sq }; }
+      }
+    }
+    return { w, shape };
+  }, [model, room, c]);
+  if (!w) return null;
+  let m = 0;
+  for (const v of w.data) m = Math.max(m, Math.abs(v));
+  const norm = (a) => Array.from(a, (v) => v / (m || 1));
+  const tiles = (count, h, wd, get, note) => (
+    <>
+      <div className="mt-1 flex flex-wrap gap-1">
+        {Array.from({ length: Math.min(count, 48) }, (_, k) => (
+          <PixelGrid key={k} values={norm(get(k))} w={wd} h={h} size={Math.min(56, Math.max(14, wd * (count === 1 ? 4 : 7)))} map="diverging" />
+        ))}
+      </div>
+      <div className="mt-1 text-[10px] text-dim">{note}; orange positive, blue negative</div>
+    </>
+  );
+  return (
+    <div className="rounded-md border border-line p-2 text-xs">
+      <div className="text-slate-200">Incoming weights</div>
+      {w.kind === 'kernel'
+        ? tiles(w.cin, w.kh, w.kw, (k) => w.data.subarray(k * w.kh * w.kw, (k + 1) * w.kh * w.kw), `one ${w.kh}×${w.kw} kernel per input channel (${w.cin}${w.cin > 48 ? ', first 48 shown' : ''})`)
+        : shape
+          ? tiles(shape.C, shape.H, shape.W, (k) => w.data.subarray(k * shape.H * shape.W, (k + 1) * shape.H * shape.W),
+              shape.C === 1 ? `${w.data.length} weights laid out like the ${shape.H}×${shape.W} input they read` : `${w.data.length} weights laid out like the ${shape.C}×${shape.H}×${shape.W} map they read, one tile per channel`)
+          : w.data.length <= 256 ? (
+            <>
+              <div className="mt-1 flex h-10 items-center gap-px">
+                {Array.from(w.data).map((v, i) => (
+                  <div key={i} className="flex h-full flex-1 flex-col justify-center" title={`input ${i}: ${v.toFixed(3)}`}>
+                    <div style={{ height: `${(Math.abs(v) / (m || 1)) * 50}%`, transform: v < 0 ? 'translateY(50%)' : 'translateY(-50%)' }} className={v >= 0 ? 'bg-warm' : 'bg-cool'} />
+                  </div>
+                ))}
+              </div>
+              <div className="text-[10px] text-dim">{w.data.length} incoming weights; orange positive, blue negative</div>
+            </>
+          ) : tiles(1, Math.ceil(w.data.length / Math.ceil(Math.sqrt(w.data.length))), Math.ceil(Math.sqrt(w.data.length)), () => {
+              const side = Math.ceil(Math.sqrt(w.data.length));
+              const out = new Float32Array(side * Math.ceil(w.data.length / side));
+              out.set(w.data);
+              return out;
+            }, `${w.data.length} incoming weights in reading order`)}
     </div>
   );
 }
