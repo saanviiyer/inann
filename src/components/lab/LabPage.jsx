@@ -461,7 +461,7 @@ export default function LabPage() {
           onDims={(dims) => { const L = lastBytes.current; if (L) loadModel(L.bytes, { ...L.m, input: { ...(L.m.input ?? {}), dims } }, L.fileName, L.dataset); }} />
         {model && kind && (
           <InputCard
-            model={model} kind={kind} norm={norm} setNorm={setNorm} prep={prep} setPrep={setPrep} pixels={shownPixels} setPixels={setCustom}
+            setKind={setKind} model={model} kind={kind} norm={norm} setNorm={setNorm} prep={prep} setPrep={setPrep} pixels={shownPixels} setPixels={setCustom}
             ds={ds} item={item} setItem={setItem} probs={probs} classes={classes} pred={pred} xFinal={xFinal} source={source}
             outKind={outKind} setOutKind={setOutKind} rawOut={out} metaClasses={!!meta.classes}
           />
@@ -685,7 +685,7 @@ function DrawBox({ onDrawn }) {
   );
 }
 
-function InputCard({ model, kind, norm, setNorm, prep, setPrep, pixels, setPixels, ds, item, setItem, probs, classes, pred, xFinal, source, outKind, setOutKind, rawOut, metaClasses }) {
+function InputCard({ setKind, model, kind, norm, setNorm, prep, setPrep, pixels, setPixels, ds, item, setItem, probs, classes, pred, xFinal, source, outKind, setOutKind, rawOut, metaClasses }) {
   const rawItem = source === 'item' && !!ds?.raw;
   const [invert, setInvert] = useState(false);
   const top = probs ? probs.map((p, i) => [p, i]).sort((a, b) => b[0] - a[0]).slice(0, 5) : [];
@@ -693,7 +693,7 @@ function InputCard({ model, kind, norm, setNorm, prep, setPrep, pixels, setPixel
     <div className="space-y-2 rounded-lg border border-line p-3">
       <div className="text-sm text-slate-100">Input</div>
       {kind.kind === 'tokens' ? (
-        <TokenInput kind={kind} ids={pixels} setIds={setPixels} />
+        <TokenInput kind={kind} ids={pixels} setIds={setPixels} setKind={setKind} model={model} />
       ) : kind.kind === 'image' ? (
         <>
           <div className="flex items-start gap-3">
@@ -1383,9 +1383,15 @@ function WrittenBy({ sae, c, onPick }) {
   );
 }
 
-function TokenInput({ kind, ids, setIds }) {
+function TokenInput({ kind, ids, setIds, setKind, model }) {
   const [text, setText] = useState('');
   const [info, setInfo] = useState(null);
+  const loadVocab = async (f) => {
+    const vocab = (await f.text()).split(/\r?\n/).filter((t, i, a) => t !== '' || i < a.length - 1);
+    setKind({ ...kind, vocab, tokenizer: 'wordpiece' });
+    const pad = vocab.indexOf('[PAD]');
+    if (model) model.padId = pad >= 0 ? pad : null; // masks then follow the real tokens
+  };
   const shown = ids ? idsToText(ids, kind) : '';
   const apply = (t) => { setText(t); const r = textToIds(t, kind); setIds(r.ids); setInfo(r); };
   return (
@@ -1393,7 +1399,7 @@ function TokenInput({ kind, ids, setIds }) {
       <input
         value={text}
         onChange={(e) => apply(e.target.value)}
-        placeholder={kind.vocab ? `type using: ${kind.vocab.join(' ')}` : 'token ids, separated by spaces'}
+        placeholder={kind.tokenizer === 'wordpiece' ? 'type a sentence' : kind.vocab ? `type using: ${kind.vocab.slice(0, 20).join(' ')}` : 'token ids, separated by spaces'}
         className="w-full rounded border border-line bg-panel px-2 py-1 font-mono text-xs text-slate-100 placeholder:text-dim"
       />
       <div className="font-mono text-sm tracking-wider text-glow">{shown}</div>
@@ -1401,6 +1407,9 @@ function TokenInput({ kind, ids, setIds }) {
         {kind.T} tokens. {kind.vocab ? `Characters outside the vocabulary are dropped; short input is padded with "${kind.vocab[0]}".` : 'No vocabulary was given, so type ids directly.'}
         {info?.dropped ? ` ${info.dropped} extra tokens were cut.` : ''}
       </div>
+      <label className="mr-1 inline-block cursor-pointer rounded-md border border-line px-2.5 py-1 text-xs text-slate-200 hover:border-glow/40" title="a Hugging Face vocab.txt, one token per line; text is then word-piece tokenized">
+        Load vocab.txt<input type="file" accept=".txt" className="hidden" onChange={(e) => e.target.files[0] && loadVocab(e.target.files[0])} />
+      </label>
       <Btn onClick={() => { const n = kind.vocab?.length ?? 2; apply(Array.from({ length: kind.T }, () => (kind.vocab ? kind.vocab[Math.floor(Math.random() * n)] : Math.floor(Math.random() * n))).join(kind.vocab ? '' : ' ')); }}>random</Btn>
     </div>
   );

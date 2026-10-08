@@ -1,7 +1,7 @@
 // Unit tests for the Lab's data utilities: the .npy reader, the character tokenizer, and the
 // measured summaries and search used to find units.
 import assert from 'node:assert/strict';
-import { parseNpy, textToIds, idsToText, inputKind, datasetFromNpy } from '../src/lib/lab/data.js';
+import { parseNpy, textToIds, idsToText, inputKind, datasetFromNpy, wordpiece } from '../src/lib/lab/data.js';
 import { describeUnit, searchUnits } from '../src/lib/lab/summary.js';
 
 // a hand-built .npy (v1.0, little-endian float32, shape (2, 3))
@@ -53,4 +53,10 @@ assert.deepEqual(ds.labels, [3, 7, 7, 3]);
 assert.equal(ds.classes[7], '7');
 const ds2 = datasetFromNpy({ shape: [2, 2], data: new Float32Array(4), dtype: '<f4' }, { data: Float64Array.from([0.5, 1.5]) }, { kind: 'vector' });
 assert.deepEqual(ds2.labels, [0, 1]); // non-integer labels are ranked
+// WordPiece: greedy longest match with ## continuations, [CLS]/[SEP], [UNK] for unknown words
+const vocab = ['[PAD]', '[UNK]', '[CLS]', '[SEP]', 'the', 'cat', 'sat', 'play', '##ing', '##s', '!'];
+assert.deepEqual(wordpiece('The cats playing!', vocab), [2, 4, 5, 9, 7, 8, 10, 3]);
+assert.deepEqual(wordpiece('zebra', vocab), [2, 1, 3]);
+const wk = { kind: 'tokens', T: 10, vocab, tokenizer: 'wordpiece' };
+assert.equal(idsToText(textToIds('the cat sat', wk).ids, wk), '[CLS] the cat sat [SEP]');
 console.log('OK lab utils');

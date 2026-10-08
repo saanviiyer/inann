@@ -93,26 +93,33 @@ export class LabModel {
     // further inputs, filled the way Hugging Face exports expect: attention masks with ones,
     // position ids with 0..T-1, everything else (token type ids, ...) with zeros. Symbolic dims
     // take the main input's sizes where they line up.
-    const extraZeros = (B) => Object.fromEntries((this.extraInputs ?? []).map((inp) => {
+    // with a known padding id (set when a word-piece vocabulary is loaded), masks follow the tokens
+    const extraZeros = (B, items) => Object.fromEntries((this.extraInputs ?? []).map((inp) => {
       const dims = inp.dims.map((d, i) => (i === 0 ? B : typeof d === 'number' && d > 0 ? d : this.inputDims[i - 1] ?? 1));
       const n = dims.reduce((a, b) => a * b, 1);
       const nm = inp.name.toLowerCase();
       const per = n / B, last = dims[dims.length - 1];
-      const fill = (j) => (nm.includes('mask') ? 1 : nm.includes('position') ? j % last : 0);
+      const fill = (j) => {
+        if (nm.includes('mask')) {
+          if (this.padId != null && items && per === this.inputSize) return items[Math.floor(j / per)][j % per] === this.padId ? 0 : 1;
+          return 1;
+        }
+        return nm.includes('position') ? (j % per) % last : 0;
+      };
       const t = inp.elem === 7
-        ? new ort.Tensor('int64', BigInt64Array.from({ length: n }, (_, j) => BigInt(fill(j % per))), dims)
+        ? new ort.Tensor('int64', BigInt64Array.from({ length: n }, (_, j) => BigInt(fill(j))), dims)
         : inp.elem === 6
-          ? new ort.Tensor('int32', Int32Array.from({ length: n }, (_, j) => fill(j % per)), dims)
-          : new ort.Tensor('float32', Float32Array.from({ length: n }, (_, j) => fill(j % per)), dims);
+          ? new ort.Tensor('int32', Int32Array.from({ length: n }, (_, j) => fill(j)), dims)
+          : new ort.Tensor('float32', Float32Array.from({ length: n }, (_, j) => fill(j)), dims);
       return [inp.name, t];
     }));
     if (this.batchable || xs.length === 1) {
-      const res = await session.run({ [name]: feedFor(xs, xs.length), ...extraZeros(xs.length), ...extraFeeds });
+      const res = await session.run({ [name]: feedFor(xs, xs.length), ...extraZeros(xs.length, xs), ...extraFeeds });
       return Object.fromEntries(Object.entries(res).map(([k, t]) => [k, { dims: t.dims, data: t.data }]));
     }
     // fixed batch of 1: run one at a time and stitch
     const parts = [];
-    for (const x of xs) parts.push(await session.run({ [name]: feedFor([x], 1), ...extraZeros(1), ...extraFeeds }));
+    for (const x of xs) parts.push(await session.run({ [name]: feedFor([x], 1), ...extraZeros(1, [x]), ...extraFeeds }));
     const out = {};
     for (const k of Object.keys(parts[0])) {
       const per = parts[0][k].data.length;

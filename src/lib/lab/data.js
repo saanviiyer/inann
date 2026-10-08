@@ -231,10 +231,46 @@ export function displayOf(ds, i, kind) {
 // dropped; the result is cut or padded (with the first vocabulary entry) to the model's length.
 export function textToIds(text, kind) {
   const ids = [];
-  if (kind.tokenizer === 'char' && kind.vocab) for (const ch of text) { const k = kind.vocab.indexOf(ch); if (k >= 0) ids.push(k); }
+  if (kind.tokenizer === 'wordpiece' && kind.vocab) ids.push(...wordpiece(text, kind.vocab));
+  else if (kind.tokenizer === 'char' && kind.vocab) for (const ch of text) { const k = kind.vocab.indexOf(ch); if (k >= 0) ids.push(k); }
   else for (const t of text.split(/[\s,]+/)) if (t !== '' && !isNaN(+t)) ids.push(+t);
+  const pad = kind.tokenizer === 'wordpiece' ? Math.max(0, kind.vocab.indexOf('[PAD]')) : 0;
   const out = new Float32Array(kind.T);
-  for (let i = 0; i < kind.T; i++) out[i] = ids[i] ?? 0;
+  for (let i = 0; i < kind.T; i++) out[i] = ids[i] ?? pad;
   return { ids: out, used: Math.min(ids.length, kind.T), dropped: Math.max(0, ids.length - kind.T) };
 }
-export const idsToText = (ids, kind) => Array.from(ids, (v) => (kind.vocab ? kind.vocab[v] ?? '?' : `${v} `)).join('');
+
+// WordPiece as in BERT's uncased tokenizer: lower-case, split on spaces and punctuation, then
+// greedy longest-match pieces with "##" continuations; [CLS] ... [SEP] around the text when the
+// vocabulary has them. (No accent stripping or Chinese-character splitting.)
+const wpCache = new WeakMap();
+export function wordpiece(text, vocab) {
+  if (!wpCache.has(vocab)) wpCache.set(vocab, new Map(vocab.map((t, i) => [t, i])));
+  const V = wpCache.get(vocab);
+  const unk = V.get('[UNK]') ?? 0;
+  const out = [];
+  if (V.has('[CLS]')) out.push(V.get('[CLS]'));
+  const words = text.toLowerCase().match(/[\p{L}\p{N}]+|[^\s\p{L}\p{N}]/gu) ?? [];
+  for (const w of words) {
+    let start = 0;
+    const pieces = [];
+    while (start < w.length) {
+      let end = w.length, hit = null;
+      while (end > start) {
+        const sub = (start > 0 ? '##' : '') + w.slice(start, end);
+        if (V.has(sub)) { hit = V.get(sub); break; }
+        end--;
+      }
+      if (hit == null) { pieces.length = 0; pieces.push(unk); break; }
+      pieces.push(hit);
+      start = end;
+    }
+    out.push(...pieces);
+  }
+  if (V.has('[SEP]')) out.push(V.get('[SEP]'));
+  return out;
+}
+
+export const idsToText = (ids, kind) => (kind.tokenizer === 'wordpiece'
+  ? Array.from(ids, (v) => kind.vocab[v] ?? '?').filter((t) => t !== '[PAD]').join(' ').replace(/ ##/g, '')
+  : Array.from(ids, (v) => (kind.vocab ? kind.vocab[v] ?? '?' : `${v} `)).join(''));
