@@ -351,7 +351,7 @@ export default function LabPage() {
       <aside ref={rightPanel} className="scroll-thin order-3 w-full shrink-0 space-y-3 border-line p-4 lg:w-[23rem] lg:overflow-y-auto lg:border-l">
         <Boundary key={selected ? `${selected.room}:${selected.index}:${!!selected.sae}` : 'none'}>
           <UnitCard
-            model={model} sel={selected} outs={outs} baseOuts={baseOuts} rooms={sceneRooms} onPick={onSelect} store={store} ds={ds} kind={kind} sae={sae} saeNow={saeNow}
+            model={model} sel={selected} outs={outs} baseOuts={baseOuts} rooms={sceneRooms} onPick={onSelect} norm={norm} store={store} ds={ds} kind={kind} sae={sae} saeNow={saeNow}
             steer={steer} setSteer={setSteer} classes={classes} onClose={() => setSelected(null)} setItem={setItem}
             onPickFeature={(f) => setSelected({ room: sae.room, index: f, sae: true })}
           />
@@ -645,7 +645,7 @@ function UnitPicker({ model, rooms, onPick }) {
   );
 }
 
-function UnitBody({ model, sel, outs, baseOuts, store, ds, kind, sae, saeNow, steer, setSteer, classes, onClose, setItem, onPickFeature }) {
+function UnitBody({ model, sel, outs, baseOuts, store, ds, kind, norm, sae, saeNow, steer, setSteer, classes, onClose, setItem, onPickFeature }) {
   const r = model.describe(sel.room);
   const L = r.layout;
   const isFeat = !!sel.sae;
@@ -709,8 +709,8 @@ function UnitBody({ model, sel, outs, baseOuts, store, ds, kind, sae, saeNow, st
                 const a = args(i);
                 const tokPos = L.kind === 'seq' ? a : L.kind === 'spatial' ? Math.floor(a / L.W) : null;
                 return (
-                  <button key={i} className="flex w-full items-center gap-2 text-left" onClick={() => setItem(i)} title="load this item">
-                    <TokenThumb ids={ds.item(i)} kind={kind} pos={tokPos} />
+                  <button key={i} className="flex w-full items-center gap-2 text-left" onClick={() => setItem(store.dsIndex[i])} title="load this item">
+                    <TokenThumb ids={ds.item(store.dsIndex[i])} kind={kind} pos={tokPos} />
                     <span className="text-[9px] text-dim">{labels ? `${classes?.[labels[i]] ?? labels[i]} · ` : ''}{acts[i].toFixed(2)}</span>
                   </button>
                 );
@@ -720,8 +720,8 @@ function UnitBody({ model, sel, outs, baseOuts, store, ds, kind, sae, saeNow, st
           ) : (
           <div className="grid grid-cols-6 gap-1">
             {top.map((i) => (
-              <button key={i} className="text-center" onClick={() => setItem(i)} title="load this item">
-                <Thumb pixels={kind.kind === 'image' ? displayOf(ds, i, kind) : null} kind={kind} size={44} box={boxFor(L, args(i), kind)} />
+              <button key={i} className="text-center" onClick={() => setItem(store.dsIndex[i])} title="load this item">
+                <Thumb pixels={kind.kind === 'image' ? displayOf(ds, store.dsIndex[i], kind) : null} kind={kind} size={44} box={boxFor(L, args(i), kind)} />
                 {kind.kind !== 'image' && <div className="h-6 rounded bg-line" />}
                 <div className="text-[9px] text-dim">{labels ? `${classes?.[labels[i]] ?? labels[i]} · ` : ''}{acts[i].toFixed(1)}</div>
               </button>
@@ -729,7 +729,7 @@ function UnitBody({ model, sel, outs, baseOuts, store, ds, kind, sae, saeNow, st
           </div>
           )}
           {pur && <div className="mt-1 text-[11px] text-slate-300">{pur.count} of its top 12 are labeled {classes?.[pur.label] ?? pur.label}.</div>}
-          {kind.kind === 'image' && <AverageInput ds={ds} kind={kind} top={top} acts={acts} />}
+          {kind.kind === 'image' && <AverageInput ds={ds} kind={kind} top={top.map((i) => store.dsIndex[i])} acts={(j) => acts[top[top.map((i) => store.dsIndex[i]).indexOf(j)]]} />}
           {L.P > 1 && kind.kind === 'image' && <div className="text-[10px] text-dim">Boxes scale the layer's grid onto the image; they show roughly where, not the exact receptive field.</div>}
         </div>
       )}
@@ -759,6 +759,9 @@ function UnitBody({ model, sel, outs, baseOuts, store, ds, kind, sae, saeNow, st
             {isFeat && ' The SAE error term is kept, so only this feature changes.'}
           </div>
         )}
+        <EffectTest model={model} ds={ds} kind={kind} norm={norm} store={store} classes={classes} room={sel.room}
+          makeTransform={(v) => (isFeat ? saeTransform(sae.sae, L, 'steer', c, v) : neuronTransform(L, c, scope === 'unit' ? p : null, v))}
+          value={steering ? steer.value : max} />
       </div>
     </div>
   );
@@ -808,8 +811,9 @@ function SaeCard({ model, rooms, store, sae, setSae, ds, kind, norm, onShow, sae
         const n = Math.min(200, store.N);
         let agree = 0, correct = 0, correctBase = 0;
         const tf = saeTransform(s, r.layout, 'recon');
-        for (let i = 0; i < n; i++) {
-          const xi = modelInputOf(ds, i, kind, norm);
+        for (let k = 0; k < n; k++) {
+          const i = Math.floor((k * store.N) / n); // evenly spaced: datasets are often sorted by class
+          const xi = modelInputOf(ds, store.dsIndex[i], kind, norm);
           const o = await model.runWith(xi, room, tf);
           const lg = o[model.outputName].data;
           const pr = Array.from(lg).indexOf(Math.max(...lg));
@@ -976,7 +980,7 @@ function LabLatent({ model, store, rooms, sae, outs, ds, setItem, classes }) {
   };
   return (
     <div className="relative h-full w-full">
-      {P && <LatentCloud P={P} labels={store.labels} classes={classes} me={me} highlight={highlight} onPick={(i) => setItem(i)} />}
+      {P && <LatentCloud P={P} labels={store.labels} classes={classes} me={me} highlight={highlight} onPick={(i) => setItem(store.dsIndex[i])} />}
       <div className="absolute right-3 top-3 z-20 w-72 space-y-2 rounded-lg border border-line bg-panel/90 p-3 text-xs">
         <Field label="layer">
           <select value={key} onChange={(e) => setKey(e.target.value)} className={`${selectCls} max-w-44`}>
@@ -1018,7 +1022,7 @@ function AverageInput({ ds, kind, top, acts }) {
     const out = new Float32Array(kind.C * kind.H * kind.W);
     let w = 0;
     for (const i of top) {
-      const a = Math.max(0, acts[i]);
+      const a = Math.max(0, typeof acts === 'function' ? acts(i) : acts[i]);
       const px = displayOf(ds, i, kind);
       for (let j = 0; j < out.length; j++) out[j] += a * px[j];
       w += a;
@@ -1183,6 +1187,61 @@ function LabSearch({ entries, classes, onPick }) {
             </button>
           ))}
           <div className="px-3 py-1 text-[10px] text-dim">Matches measured summaries (labels, frequency, position), not language-model explanations.</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Clamp this unit on many dataset items and count how the answer moves: the Lab's version of the
+// Tour's measured steering presets. Selectivity = share of the main source class sent to the main
+// target, minus the share of all other items sent there (a clamp that moves everything is not
+// evidence about one class).
+function EffectTest({ model, ds, kind, norm, store, classes, room, makeTransform, value }) {
+  const [res, setRes] = useState(null);
+  const [busy, setBusy] = useState(false);
+  if (!ds || !store) return null;
+  const run = async () => {
+    setBusy(true);
+    const n = Math.min(100, store.N);
+    const tf = makeTransform(value);
+    const moves = {};
+    let changed = 0;
+    const perClass = {};
+    // evenly spaced over the analysed items, since datasets are often sorted by class
+    for (let k = 0; k < n; k++) {
+      const i = Math.floor((k * store.N) / n);
+      const o = await model.runWith(modelInputOf(ds, store.dsIndex[i], kind, norm), room, tf);
+      const lg = o[model.outputName].data;
+      const p = Array.from(lg).indexOf(Math.max(...lg));
+      const b = store.preds[i];
+      perClass[b] = (perClass[b] ?? 0) + 1;
+      if (p !== b) { changed++; const k = `${b}>${p}`; moves[k] = (moves[k] ?? 0) + 1; }
+    }
+    const top = Object.entries(moves).sort((a, b) => b[1] - a[1]).slice(0, 4).map(([k, cnt]) => {
+      const [from, to] = k.split('>').map(Number);
+      const othersTo = Object.entries(moves).filter(([kk]) => kk.endsWith(`>${to}`) && !kk.startsWith(`${from}>`)).reduce((a, [, v]) => a + v, 0);
+      const othersN = n - (perClass[from] ?? 0) - (perClass[to] ?? 0);
+      return { from, to, cnt, of: perClass[from] ?? 0, othersTo, othersN, sel: cnt / (perClass[from] || 1) - othersTo / (othersN || 1) };
+    });
+    setRes({ n, changed, top, value });
+    setBusy(false);
+  };
+  const name = (k) => classes?.[k] ?? k;
+  return (
+    <div className="mt-1 border-t border-line pt-1.5 text-[11px]">
+      <Btn onClick={run} disabled={busy}>{busy ? 'Testing...' : `What does it control? Test at ${value.toFixed(2)} on ${Math.min(100, store.N)} items`}</Btn>
+      {res && (
+        <div className="mt-1 space-y-0.5 text-slate-300">
+          <div>At {res.value.toFixed(2)}, the answer changed on <span className="text-warm">{res.changed}</span> of {res.n} items.</div>
+          {res.top.map((t) => (
+            <div key={`${t.from}>${t.to}`}>
+              {t.cnt} of {t.of} predicted {name(t.from)} became {name(t.to)}; {t.othersTo} of {t.othersN} others also became {name(t.to)}
+              <span className={t.sel > 0.5 ? ' text-glow' : ' text-dim'}> (selectivity {t.sel.toFixed(2)})</span>
+            </div>
+          ))}
+          {res.changed === 0 && <div className="text-dim">Nothing moved at this value; try a larger clamp.</div>}
+          <div className="text-[10px] text-dim">Selectivity near 1 means the clamp moves one kind of item; near 0 means it pushes everything the same way.<Cite id="olah2020" /></div>
         </div>
       )}
     </div>

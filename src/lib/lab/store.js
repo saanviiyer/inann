@@ -7,6 +7,8 @@ const FULL_LIMIT = 30e6; // floats kept per room at most (~120 MB)
 
 export async function collect(model, ds, kind, norm, rooms, { max = 2000, batch = 32, onProgress } = {}) {
   const N = Math.min(ds.n, max);
+  // which dataset items to analyse: all of them, or an even spread (datasets are often sorted by class)
+  const dsIndex = Int32Array.from({ length: N }, (_, k) => (N === ds.n ? k : Math.floor((k * ds.n) / N)));
   const stats = {};
   for (const r of rooms) {
     const L = r.layout;
@@ -20,7 +22,7 @@ export async function collect(model, ds, kind, norm, rooms, { max = 2000, batch 
   const B = model.batchable ? batch : 1;
   for (let s = 0; s < N; s += B) {
     const idx = Array.from({ length: Math.min(B, N - s) }, (_, k) => s + k);
-    const out = await model.run(idx.map((i) => modelInputOf(ds, i, kind, norm)));
+    const out = await model.run(idx.map((i) => modelInputOf(ds, dsIndex[i], kind, norm)));
     for (const r of rooms) {
       const st = stats[r.name], L = st.layout, t = out[r.name];
       if (!t) continue;
@@ -55,7 +57,7 @@ export async function collect(model, ds, kind, norm, rooms, { max = 2000, batch 
     st.signed = st.lo < -1e-6;
     delete st.sample;
   }
-  return { N, stats, preds, labels: ds.labels ? ds.labels.slice(0, N) : null, classes: ds.classes ?? null };
+  return { N, stats, preds, dsIndex, labels: ds.labels ? Array.from(dsIndex, (j) => ds.labels[j]) : null, classes: ds.classes ?? null };
 }
 
 // Channel c's activation (max over positions) on every item.
