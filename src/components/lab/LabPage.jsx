@@ -17,6 +17,7 @@ import { toJSON, fromJSON } from '../../lib/lab/saeCore.js';
 import { linearSource, incomingWeights, preFlattenTensor } from '../../lib/lab/graph.js';
 import { PixelGrid } from '../ui.jsx';
 import { describeUnit, searchUnits } from '../../lib/lab/summary.js';
+import { ScoreBadge } from '../FeatureRoom.jsx';
 import { pcaOf, knnAccOf, separationOf } from '../../lib/latent.js';
 
 const BASE = import.meta.env.BASE_URL;
@@ -73,6 +74,11 @@ export default function LabPage() {
   const [view, setView] = useState('space');
   const [frameNonce, setFrameNonce] = useState(0);
   const [focusRoom, setFocusRoom] = useState(null);
+  const [expl, setExpl] = useState(null); // explanations from scripts/explain_lab.py
+  const explFor = useCallback((room, unit, isFeat) => {
+    if (!expl || expl.tensor !== room || expl.sae !== !!isFeat) return null;
+    return expl.byUnit.get(unit) ?? null;
+  }, [expl]);
   const runId = useRef(0);
   const rightPanel = useRef(null);
 
@@ -138,6 +144,10 @@ export default function LabPage() {
     let m = {};
     if (metaFile) {
       try { m = JSON.parse(await metaFile.text()); } catch { setError('The .json next to the model is not valid JSON; ignoring it.'); }
+    }
+    if (!onnx && m.kind === 'inann-lab-explanations') {
+      setExpl({ ...m, byUnit: new Map(m.units.map((u) => [u.unit, u])) });
+      return;
     }
     if (onnx) await loadModel(await onnx.arrayBuffer(), m, onnx.name, null);
     else if (metaFile && !onnx) setError('Drop the .onnx file too (the .json only describes it).');
@@ -264,7 +274,7 @@ export default function LabPage() {
       for (let c = 0; c < st.layout.C && c < 4096; c++) {
         const acts = channelActs(store, r.name, c);
         const sm = describeUnit(acts, (i) => st.chArg[i * st.layout.C + c], st.layout, store.labels, classes);
-        out.push({ key: `${r.name}:${c}`, room: r.name, roomLabel: r.label, index: st.layout.idx(c, 0), c, summary: sm, className: sm.purity ? classes?.[sm.purity.label] ?? sm.purity.label : null });
+        out.push({ key: `${r.name}:${c}`, room: r.name, roomLabel: r.label, index: st.layout.idx(c, 0), c, summary: sm, className: sm.purity ? classes?.[sm.purity.label] ?? sm.purity.label : null, expl: explFor(r.name, c, false) });
       }
     });
     if (sae?.stats) {
@@ -273,11 +283,11 @@ export default function LabPage() {
         const acts = Float32Array.from({ length: sae.N }, (_, i) => sae.stats.featMax[i * F + f]);
         if (!acts.some((v) => v > 0)) continue;
         const sm = describeUnit(acts, (i) => sae.stats.featArg[i * F + f], L, store.labels, classes);
-        out.push({ key: `sae:${f}`, room: sae.room, roomLabel: 'SAE', index: f, c: f, sae: true, summary: sm, className: sm.purity ? classes?.[sm.purity.label] ?? sm.purity.label : null });
+        out.push({ key: `sae:${f}`, room: sae.room, roomLabel: 'SAE', index: f, c: f, sae: true, summary: sm, className: sm.purity ? classes?.[sm.purity.label] ?? sm.purity.label : null, expl: explFor(sae.room, f, true) });
       }
     }
     return out;
-  }, [store, rooms, sae, classes, model]);
+  }, [store, rooms, sae, classes, model, explFor]);
   useEffect(() => { if (sae) setFrameNonce((n) => n + 1); }, [sae?.room, sae?.sae]); // eslint-disable-line
   useEffect(() => { if (selected) rightPanel.current?.scrollTo({ top: 0, behavior: 'smooth' }); }, [selected]);
   const onHover = useCallback((h) => setHover(h), []);
@@ -292,7 +302,7 @@ export default function LabPage() {
       setDragAll(false);
       if (!files.length) return;
       e.preventDefault();
-      if (files.some((f) => f.name.endsWith('.onnx'))) onFiles(files);
+      if (files.some((f) => f.name.endsWith('.onnx')) || (files.length === 1 && /explanations/i.test(files[0].name))) onFiles(files);
       else onDatasetFiles(files, false);
     };
     window.addEventListener('dragover', over);
@@ -334,6 +344,7 @@ export default function LabPage() {
         {model && kind && (
           <DataCard ds={ds} store={store} progress={progress} analyze={analyze} onFiles={onDatasetFiles} kind={kind} maxItems={maxItems} setMaxItems={setMaxItems} />
         )}
+        {model && <ExplCard expl={expl} setExpl={setExpl} model={model} sae={sae} />}
         {model && (
           <RoomsCard model={model} roomNames={roomNames} setRoomNames={(n) => { setRoomNames(n); setStore(null); setSae(null); setSteer(null); }} />
         )}
@@ -385,7 +396,7 @@ export default function LabPage() {
       <aside ref={rightPanel} className="scroll-thin order-3 w-full shrink-0 space-y-3 border-line p-4 lg:w-[23rem] lg:overflow-y-auto lg:border-l">
         <Boundary key={selected ? `${selected.room}:${selected.index}:${!!selected.sae}` : 'none'}>
           <UnitCard
-            model={model} sel={selected} outs={outs} baseOuts={baseOuts} rooms={sceneRooms} onPick={onSelect} norm={norm} store={store} ds={ds} kind={kind} sae={sae} saeNow={saeNow}
+            model={model} sel={selected} outs={outs} baseOuts={baseOuts} rooms={sceneRooms} onPick={onSelect} norm={norm} explFor={explFor} store={store} ds={ds} kind={kind} sae={sae} saeNow={saeNow}
             steer={steer} setSteer={setSteer} classes={classes} onClose={() => setSelected(null)} setItem={setItem}
             onPickFeature={(f) => setSelected({ room: sae.room, index: f, sae: true })}
           />
@@ -679,7 +690,7 @@ function UnitPicker({ model, rooms, onPick }) {
   );
 }
 
-function UnitBody({ model, sel, outs, baseOuts, store, ds, kind, norm, sae, saeNow, steer, setSteer, classes, onClose, setItem, onPickFeature }) {
+function UnitBody({ model, sel, outs, baseOuts, store, ds, kind, norm, sae, saeNow, steer, setSteer, classes, onClose, setItem, onPickFeature, explFor }) {
   const r = model.describe(sel.room);
   const L = r.layout;
   const isFeat = !!sel.sae;
@@ -700,6 +711,7 @@ function UnitBody({ model, sel, outs, baseOuts, store, ds, kind, norm, sae, saeN
   const max = acts ? Math.max(...acts) : Math.abs(chNow) || 1;
   const lo = acts ? Math.min(0, Math.min(...acts)) : 0;
   const summary = acts ? describeUnit(acts, args, L, labels, classes).text : null;
+  const explanation = explFor?.(sel.room, c, isFeat);
 
   const steering = steer && steer.room === sel.room && (isFeat ? steer.sae && steer.feature === c : !steer.sae && steer.c === c);
   const [scope, setScope] = useState('channel');
@@ -719,6 +731,15 @@ function UnitBody({ model, sel, outs, baseOuts, store, ds, kind, norm, sae, saeN
         </div>
         <Btn onClick={onClose}>Close</Btn>
       </div>
+      {explanation && (
+        <div className="space-y-1">
+          <p className="text-sm leading-snug text-slate-100">"{explanation.explanation}"</p>
+          <div className="flex flex-wrap items-center gap-1.5">
+            <ScoreBadge ex={explanation} />
+            <span className="text-[10px] text-dim">written by {explanation.model ?? 'Claude'} from 12 examples, scored by simulation on 20 others<Cite id="bills2023" /></span>
+          </div>
+        </div>
+      )}
       {summary && <div className="rounded bg-glow/5 px-2 py-1 text-[11px] text-slate-200">{summary}<span className="ml-1 text-dim">(measured)</span></div>}
       <div className="flex items-baseline gap-2">
         <span className="text-3xl font-semibold text-glow">{chNow.toFixed(2)}</span>
@@ -1223,10 +1244,11 @@ function LabSearch({ entries, classes, onPick }) {
           {res.map((e) => (
             <button key={e.key} onMouseDown={() => onPick(e)} className="block w-full border-b border-line/60 px-3 py-1.5 text-left hover:bg-glow/10">
               <div className="text-xs text-slate-100">{e.sae ? `SAE feature ${e.index}` : `${e.roomLabel}, channel ${e.c}`}</div>
+              {e.expl && <div className="text-[10px] italic text-slate-200">"{e.expl.explanation}" <span className="not-italic text-dim">r {e.expl.score.toFixed(2)}</span></div>}
               <div className="text-[10px] text-slate-400">{e.summary.text}</div>
             </button>
           ))}
-          <div className="px-3 py-1 text-[10px] text-dim">Matches measured summaries (labels, frequency, position), not language-model explanations.</div>
+          <div className="px-3 py-1 text-[10px] text-dim">Matches measured summaries (labels, frequency, position), plus written explanations if loaded.</div>
         </div>
       )}
     </div>
@@ -1283,6 +1305,41 @@ function EffectTest({ model, ds, kind, norm, store, classes, room, makeTransform
           {res.changed === 0 && <div className="text-dim">Nothing moved at this value; try a larger clamp.</div>}
           <div className="text-[10px] text-dim">Selectivity near 1 means the clamp moves one kind of item; near 0 means it pushes everything the same way.<Cite id="olah2020" /></div>
         </div>
+      )}
+    </div>
+  );
+}
+
+function ExplCard({ expl, setExpl, model, sae }) {
+  const load = async (f) => {
+    try {
+      const j = JSON.parse(await f.text());
+      if (j.kind !== 'inann-lab-explanations') throw new Error('not an explanations file from scripts/explain_lab.py');
+      setExpl({ ...j, byUnit: new Map(j.units.map((u) => [u.unit, u])) });
+    } catch (e) { alert(e.message); }
+  };
+  const tensor = sae?.room ?? model.rooms[model.rooms.length - 2]?.name ?? model.rooms[0]?.name;
+  return (
+    <div className="space-y-1.5 rounded-lg border border-line p-3 text-xs">
+      <div className="text-sm text-slate-100">Written explanations</div>
+      {expl ? (
+        <div className="text-slate-300">
+          {expl.units.length} {expl.sae ? 'SAE features' : 'channels'} of {expl.tensor} explained by {expl.explainer_model}; median simulation score{' '}
+          {median(expl.units.map((u) => u.score)).toFixed(2)}. They appear in each room and in the unit search.
+          <button className="ml-1 text-dim underline" onClick={() => setExpl(null)}>remove</button>
+        </div>
+      ) : (
+        <>
+          <p className="leading-snug text-slate-400">
+            One sentence per unit, written by Claude from its top examples and scored by how well the sentence alone predicts the unit on other items.<Cite id="bills2023" /> Generate them offline with your own API key, then load the file here.
+          </p>
+          <pre className="overflow-x-auto rounded bg-black/40 p-1.5 text-[10px] text-slate-300">{`python3 scripts/explain_lab.py \\
+  --model ${model.fileName} --data dataset.json \\
+  ${sae ? '--sae sae.json' : `--tensor "${tensor}"`}`}</pre>
+          <label className="inline-block cursor-pointer rounded-md border border-line px-2.5 py-1 text-slate-200 hover:border-glow/40">
+            Load explanations .json<input type="file" accept=".json" className="hidden" onChange={(e) => e.target.files[0] && load(e.target.files[0])} />
+          </label>
+        </>
       )}
     </div>
   );

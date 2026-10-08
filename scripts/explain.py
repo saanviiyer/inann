@@ -33,25 +33,12 @@ from PIL import Image, ImageDraw
 
 from common import DATA, ROOT, forward, load_cnn, load_split
 
-MODEL = "claude-opus-5-5"
+from autointerp import MODEL, EXPLAIN_SCHEMA, SIM_SCHEMA, load_env, grid, sim_set, pearson
+from autointerp import ask as _ask
+from autointerp import tile as _tile
+
 CACHE = ROOT / "scripts" / ".cache" / "explain"
 MIN_ACTIVE = 5  # units active on fewer held-out digits than this are not explained
-
-EXPLAIN_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "explanation": {"type": "string"},
-        "tags": {"type": "array", "items": {"type": "string"}},
-    },
-    "required": ["explanation", "tags"],
-    "additionalProperties": False,
-}
-SIM_SCHEMA = {
-    "type": "object",
-    "properties": {"predictions": {"type": "array", "items": {"type": "integer"}}},
-    "required": ["predictions"],
-    "additionalProperties": False,
-}
 
 EXPLAIN_PROMPT = """You are explaining one unit inside a small convolutional network that classifies 8x8 handwritten digits (0 to 9).
 
@@ -71,14 +58,6 @@ Below are {n} handwritten 8x8 digits, numbered 1 to {n} in reading order. Using 
 
 Return exactly {n} integers, in order."""
 
-
-def load_env():
-    p = ROOT / ".env.local"
-    if p.exists():
-        for line in p.read_text().splitlines():
-            if "=" in line and not line.lstrip().startswith("#"):
-                k, v = line.split("=", 1)
-                os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
 
 
 def unit_activations():
@@ -107,50 +86,15 @@ def unit_activations():
     return units, Xte, yte
 
 
+
+
+
 def tile(img, label=None, overlay=None, size=72):
-    g = (np.clip(img, 0, 1) * 255).astype(np.uint8)
-    rgb = np.stack([g, g, g], -1).astype(np.float32)
-    if overlay is not None:
-        o = np.array(Image.fromarray(overlay.astype(np.float32)).resize((8, 8), Image.NEAREST))
-        o = o / (o.max() or 1)
-        rgb = rgb * (1 - 0.55 * o[..., None]) + np.array([255, 150, 40]) * 0.55 * o[..., None]
-    im = Image.fromarray(rgb.astype(np.uint8)).resize((size, size), Image.NEAREST)
-    canvas = Image.new("RGB", (size + 8, size + (22 if label is not None else 8)), (30, 34, 44))
-    canvas.paste(im, (4, 4))
-    if label is not None:
-        ImageDraw.Draw(canvas).text((6, size + 6), label, fill=(240, 240, 240))
-    return canvas
-
-
-def grid(tiles, cols):
-    w, h = tiles[0].size
-    rows = (len(tiles) + cols - 1) // cols
-    g = Image.new("RGB", (cols * w, rows * h), (20, 22, 30))
-    for k, t in enumerate(tiles):
-        g.paste(t, ((k % cols) * w, (k // cols) * h))
-    buf = io.BytesIO()
-    g.save(buf, format="PNG")
-    return base64.b64encode(buf.getvalue()).decode()
+    return _tile(img, label, overlay, size=size)
 
 
 def ask(client, png_b64, text, schema, effort):
-    msg = client.beta.messages.create(
-        model=MODEL,
-        max_tokens=16000,
-        betas=["server-side-fallback-2026-07-01"],
-        fallbacks="default",
-        output_config={"effort": effort, "format": {"type": "json_schema", "schema": schema}},
-        messages=[{"role": "user", "content": [
-            {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": png_b64}},
-            {"type": "text", "text": text},
-        ]}],
-    )
-    if msg.stop_reason == "refusal":
-        raise RuntimeError(f"refused: {msg.stop_details}")
-    if msg.stop_reason == "max_tokens":
-        raise RuntimeError("hit max_tokens")
-    text_out = "".join(b.text for b in msg.content if b.type == "text")
-    return json.loads(text_out), msg.model
+    return _ask(client, text, schema, effort, png_b64)
 
 
 def explain_unit(client, u, X, explain_idx, score_idx):
@@ -163,18 +107,14 @@ def explain_unit(client, u, X, explain_idx, score_idx):
                      EXPLAIN_PROMPT.format(n=len(top), where=WHERE_CONV if "maps" in u else ""),
                      EXPLAIN_SCHEMA, "medium")
     # 2. simulate on the other half: 10 top-activating + 10 random, shuffled (seeded per unit)
-    rng = random.Random(u["id"])
-    top_s = list(score_idx[np.argsort(-a[score_idx])][:10])
-    rest = [i for i in score_idx if i not in top_s]
-    sim_idx = top_s + rng.sample(rest, 10)
-    rng.shuffle(sim_idx)
+    sim_idx = sim_set(a, score_idx, u["id"])
     sim, _ = ask(client, grid([tile(X[i]) for i in sim_idx], 5),
                  SIM_PROMPT.format(explanation=ex["explanation"], n=len(sim_idx)), SIM_SCHEMA, "medium")
     pred = np.array(sim["predictions"][: len(sim_idx)], dtype=float)
     if len(pred) != len(sim_idx):
         raise RuntimeError(f"simulator returned {len(pred)} predictions for {len(sim_idx)} digits")
     true = a[sim_idx]
-    score = float(np.corrcoef(pred, true)[0, 1]) if pred.std() > 0 and true.std() > 0 else 0.0
+    score = pearson(pred, true)
     return {
         "id": u["id"], "layer": u["layer"], "index": u["index"],
         "explanation": ex["explanation"].strip(), "tags": [t.strip().lower() for t in ex["tags"]][:6],

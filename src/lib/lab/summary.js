@@ -40,7 +40,7 @@ export function searchUnits(query, entries, classes = null) {
   const classSet = new Set((classes ?? []).map((c) => String(c).toLowerCase()));
   return entries
     .map((e) => {
-      const t = e.summary.text.toLowerCase();
+      const t = `${e.summary.text} ${e.expl ? `${e.expl.explanation} ${e.expl.tags.join(' ')}` : ''}`.toLowerCase();
       let score = 0;
       for (const w of words) {
         // a word that names a class matches only units whose top items are that class

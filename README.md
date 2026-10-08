@@ -117,6 +117,15 @@ How it works:
 - To clamp a tensor, its producer's output is renamed and the tensor becomes a graph input, which makes the override model. The rest of the graph runs normally, skip connections included.
 - `npm test` checks all of this against the official onnx Python tooling, a residual-plus-BatchNorm fixture, a transformer fixture and the token path.
 
+### Written explanations for your model
+
+`scripts/explain_lab.py` runs the Tour's explain-and-simulate loop (Bills et al. 2023) on any ONNX model. It works on the channels of one tensor, or on the features of an SAE downloaded from the Lab. Image units are shown to Claude as montages with a box where the unit fired; token units are shown as text with the firing token in brackets. Load the resulting JSON with **Load explanations** (or drop it on the page). Each sentence then appears in its room with its simulation score, and the unit search covers it.
+
+```bash
+python3 scripts/explain_lab.py --model m.onnx --meta m.meta.json --data dataset.json --tensor "/Relu_2_output_0"
+python3 scripts/explain_lab.py --model m.onnx --data dataset.json --sae sae_layer.json --dry-run   # previews only, no API calls
+```
+
 ### Exporting a model
 
 ```python
