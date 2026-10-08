@@ -76,6 +76,7 @@ export default function LabPage() {
   const [frameNonce, setFrameNonce] = useState(0);
   const [focusRoom, setFocusRoom] = useState(null);
   const [expl, setExpl] = useState(null); // explanations from scripts/explain_lab.py
+  const [pinned, setPinned] = useState(null); // {outs, pixels, label} of a pinned input, for difference mode
   const explFor = useCallback((room, unit, isFeat) => {
     if (!expl || expl.tensor !== room || expl.sae !== !!isFeat) return null;
     return expl.byUnit.get(unit) ?? null;
@@ -232,15 +233,29 @@ export default function LabPage() {
   const values = useMemo(() => {
     const v = {};
     if (!outs) return v;
+    if (pinned) {
+      // difference mode: this input minus the pinned one, per unit
+      for (const r of rooms) {
+        const a = outs[r.name]?.data, b = pinned.outs[r.name]?.data;
+        if (a && b && a.length === b.length) v[r.name] = Float32Array.from(a, (x, i) => x - b[i]);
+      }
+      return v;
+    }
     for (const r of rooms) if (outs[r.name]) v[r.name] = r.isOutput && r.layout.size <= 32 ? Float32Array.from(maybeSoftmax(outs[r.name].data)) : outs[r.name].data;
     if (inputRoom && kind?.kind === 'tokens' && xFinal) v.__input = Float32Array.from(xFinal, () => 0.6);
     else if (inputRoom && kind?.kind !== 'image' && xFinal) v.__input = xFinal;
     return v;
-  }, [outs, rooms, inputRoom, kind, xFinal]);
+  }, [outs, rooms, inputRoom, kind, xFinal, pinned]);
   const scales = useMemo(() => {
     const s = {};
     for (const r of rooms) {
       const st = store?.stats[r.name];
+      if (pinned) {
+        let m = 0;
+        for (const x of values[r.name] ?? []) m = Math.max(m, Math.abs(x));
+        s[r.name] = m || 1; s[`${r.name}:signed`] = true;
+        continue;
+      }
       if (r.isOutput && r.layout.size <= 32) { s[r.name] = 1; continue; }
       if (st) { s[r.name] = st.scale; s[`${r.name}:signed`] = st.signed; }
       else if (values[r.name]) { let m = 0; for (const v of values[r.name]) m = Math.max(m, Math.abs(v)); s[r.name] = m || 1; s[`${r.name}:signed`] = values[r.name].some((v) => v < 0); }
@@ -248,7 +263,7 @@ export default function LabPage() {
     if (values.__input && kind?.kind === 'tokens') s.__input = 1;
     else if (values.__input) { let m = 0; for (const v of values.__input) m = Math.max(m, Math.abs(v)); s.__input = m || 1; s['__input:signed'] = values.__input.some((v) => v < 0); }
     return s;
-  }, [rooms, store, values]);
+  }, [rooms, store, values, pinned]);
 
   const out = outs && model ? outs[model.outputName]?.data : null;
   const probs = out && out.length <= 1000 ? maybeSoftmax(out) : null;
@@ -384,6 +399,21 @@ export default function LabPage() {
               </button>
             )}
             <button onClick={() => { setFocusRoom(null); setFrameNonce((n) => n + 1); }} className="block w-full rounded px-1.5 py-0.5 text-left text-dim hover:text-slate-200">whole model</button>
+          </div>
+        )}
+        {view === 'space' && outs && (
+          <div className="absolute bottom-12 left-3 z-20 flex items-center gap-2 rounded-md border border-line bg-panel/90 px-2 py-1 text-[11px] text-slate-300">
+            {pinned ? (
+              <>
+                <span>
+                  Showing <b className="text-warm">this input minus the pinned one</b>; orange is higher now, blue lower. Each room is scaled to its own largest change.
+                </span>
+                {kind?.kind === 'image' && <Thumb pixels={pinned.pixels} kind={kind} size={28} />}
+                <Btn onClick={() => setPinned(null)}>unpin</Btn>
+              </>
+            ) : (
+              <Btn onClick={() => setPinned({ outs, pixels: shownPixels })} title="freeze this input, then change the input to compare">Pin this input to compare</Btn>
+            )}
           </div>
         )}
         {steer && (
