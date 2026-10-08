@@ -76,7 +76,8 @@ export default function LabPage() {
   const [frameNonce, setFrameNonce] = useState(0);
   const [focusRoom, setFocusRoom] = useState(null);
   const [expl, setExpl] = useState(null); // explanations from scripts/explain_lab.py
-  const [pinned, setPinned] = useState(null); // {outs, pixels, label} of a pinned input, for difference mode
+  const [pinned, setPinned] = useState(null);
+  const [outKind, setOutKind] = useState('classes'); // how to read the first output: class scores or raw values // {outs, pixels, label} of a pinned input, for difference mode
   const explFor = useCallback((room, unit, isFeat) => {
     if (!expl || expl.tensor !== room || expl.sae !== !!isFeat) return null;
     return expl.byUnit.get(unit) ?? null;
@@ -97,6 +98,7 @@ export default function LabPage() {
       setRoomNames(lm.rooms.map((r) => r.name));
       const perItem = lm.rooms.reduce((a, r) => a + (r.layout?.size ?? 0), 0);
       setMaxItems(lm.summary.params > 5e6 || perItem > 2e5 ? 100 : 1000);
+      setOutKind(m.output?.kind === 'values' ? 'values' : 'classes');
       setPixels(new Float32Array(k.kind === 'image' ? k.C * k.H * k.W : lm.inputSize));
       if (k.kind === 'tokens' && !dataset) setSource('custom');
       setDs(dataset);
@@ -266,7 +268,7 @@ export default function LabPage() {
   }, [rooms, store, values, pinned]);
 
   const out = outs && model ? outs[model.outputName]?.data : null;
-  const probs = out && out.length <= 1000 ? maybeSoftmax(out) : null;
+  const probs = out && out.length <= 1000 && outKind === 'classes' ? maybeSoftmax(out) : null;
   const pred = probs ? probs.indexOf(Math.max(...probs)) : null;
   const classes = meta.classes ?? ds?.classes ?? null;
 
@@ -355,6 +357,7 @@ export default function LabPage() {
           <InputCard
             model={model} kind={kind} norm={norm} setNorm={setNorm} prep={prep} setPrep={setPrep} pixels={shownPixels} setPixels={setCustom}
             ds={ds} item={item} setItem={setItem} probs={probs} classes={classes} pred={pred} xFinal={xFinal} source={source}
+            outKind={outKind} setOutKind={setOutKind} rawOut={out} metaClasses={!!meta.classes}
           />
         )}
         {model && kind && (
@@ -533,7 +536,7 @@ function DrawBox({ onDrawn }) {
   );
 }
 
-function InputCard({ model, kind, norm, setNorm, prep, setPrep, pixels, setPixels, ds, item, setItem, probs, classes, pred, xFinal, source }) {
+function InputCard({ model, kind, norm, setNorm, prep, setPrep, pixels, setPixels, ds, item, setItem, probs, classes, pred, xFinal, source, outKind, setOutKind, rawOut, metaClasses }) {
   const rawItem = source === 'item' && !!ds?.raw;
   const [invert, setInvert] = useState(false);
   const top = probs ? probs.map((p, i) => [p, i]).sort((a, b) => b[0] - a[0]).slice(0, 5) : [];
@@ -594,6 +597,17 @@ function InputCard({ model, kind, norm, setNorm, prep, setPrep, pixels, setPixel
             {Object.entries(NORMS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
           </select>
         </Field>
+      )}
+      <Field label="read the output as">
+        <select value={outKind} onChange={(e) => setOutKind(e.target.value)} className={selectCls}>
+          <option value="classes">class scores (softmax){metaClasses ? '' : ', assumed'}</option>
+          <option value="values">raw values</option>
+        </select>
+      </Field>
+      {outKind === 'values' && rawOut && (
+        <div className="text-[11px] text-slate-300">
+          First output, {rawOut.length} value{rawOut.length === 1 ? '' : 's'}: {Array.from(rawOut).slice(0, 8).map((v) => v.toFixed(3)).join(', ')}{rawOut.length > 8 ? ', ...' : ''}
+        </div>
       )}
       {probs && probs.length <= 1000 && (
         <div className="space-y-0.5 pt-1 text-xs">

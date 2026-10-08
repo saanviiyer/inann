@@ -149,6 +149,7 @@ A dynamic batch axis makes the dataset pass much faster. Keras and TensorFlow mo
 ```
 
 - `input.kind`: `image`, `vector` or `tokens`.
+- `output.kind`: `classes` (the default, read as softmax class scores) or `values` (regression, embeddings: shown raw, with no softmax and no predicted class).
 - `input.norm` (images): `unit` (0..1), `sym` (-1..1), `byte` (0..255), `mnist` or `imagenet`.
 - `input.preprocess` (drawings): `mnist`, `fit` or `stretch`.
 - For tokens: `"vocab": [...]`, `"tokenizer": "char"`, and `"dims": [length]` when the length is symbolic.
