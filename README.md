@@ -77,3 +77,73 @@ src/lib/model.js           loads weights, precomputes held-out activations and b
 src/lib/analysis.js        top patches, cosine similarity, MDS
 src/components/Scene.jsx   react-three-fiber space
 ```
+
+## Lab: bring your own model
+
+Open the app, switch the header to **Lab: your model** (or go to `/#lab`), and drop in an `.onnx` file. It runs on your machine with ONNX Runtime Web, and the file never leaves the browser. Four example models are one click away: an MNIST CNN, an MNIST MLP, the Tour's 8x8 CNN, and a parentheses transformer.
+
+What you get for any model:
+- **Rooms in 3D**, one per chosen tensor.
+  - Conv maps are tiles, one per channel.
+  - Sequences are token-by-feature maps.
+  - Attention weights are one tile per head.
+  - Small vectors are sphere clouds, and small outputs are labelled pods.
+  - The defaults are activation outputs, Softmax, LayerNorm and the final output, with one room per residual block for deep nets. You can choose any tensor.
+- **A room per unit.** It shows the unit's value now, a histogram over your dataset, the top 12 items with where the unit fired, label purity, and an activation-weighted average input. You can also clamp a channel (every position, or one) and watch the answer change.
+- **A sparse autoencoder on any layer**, trained in a Web Worker in the page.
+  - Conv maps give one C-dim vector per pixel, and sequences one per token.
+  - The SAE docks beside its layer as a disk of features, each with its own room and clamp. It reports:
+    - held-out variance explained
+    - how often the answer survives replacing the layer with its reconstruction
+    - neuron and feature label purity
+  - You can download the SAE as JSON and load it again later.
+- **Latent space** of any stored layer, or of the SAE's features, as a PCA cloud. It also shows full-space nearest-neighbour accuracy and the spacing ratio.
+
+Inputs: draw (with MNIST-style centring), upload a picture, type tokens through the model's vocabulary, or use dataset items. Datasets can be:
+- a folder of images, with labels taken from folder names or `label_name.png`
+- `.npy` arrays (x, plus an optional y)
+- a dataset `.json`
+
+You can also load a model by link: `/?model=URL&meta=URL&data=URL#lab`. The server has to allow cross-origin requests.
+
+How it works:
+- `src/lib/lab/graph.js` decodes the ONNX protobuf.
+- Every float tensor is added as a graph output, which makes the probe model. Integer shape tensors are found statically, and any ORT type error is retried.
+- To clamp a tensor, its producer's output is renamed and the tensor becomes a graph input, which makes the override model. The rest of the graph runs normally, skip connections included.
+- `npm test` checks all of this against the official onnx Python tooling, a residual-plus-BatchNorm fixture, a transformer fixture and the token path.
+
+### Exporting a model
+
+```python
+torch.onnx.export(model.eval(), example_input, "model.onnx",
+                  input_names=["input"], output_names=["logits"],
+                  dynamic_axes={"input": {0: "batch"}, "logits": {0: "batch"}}, opset_version=17)
+```
+
+A dynamic batch axis makes the dataset pass much faster. Keras and TensorFlow models convert with `tf2onnx`.
+
+### Optional `model.meta.json` (drop it next to the `.onnx`)
+
+```json
+{
+  "name": "My classifier",
+  "description": "one line shown in the model card",
+  "input": {"kind": "image", "norm": "imagenet", "preprocess": "fit"},
+  "classes": ["cat", "dog"],
+  "dataset": "my_dataset.json"
+}
+```
+
+- `input.kind`: `image`, `vector` or `tokens`.
+- `input.norm` (images): `unit` (0..1), `sym` (-1..1), `byte` (0..255), `mnist` or `imagenet`.
+- `input.preprocess` (drawings): `mnist`, `fit` or `stretch`.
+- For tokens: `"vocab": [...]`, `"tokenizer": "char"`, and `"dims": [length]` when the length is symbolic.
+
+A dataset `.json` has the form `{shape, labels?, classes?, data}`. `data` is base64 of uint8 pixels by default, or of int32/float32 values with `"dtype"` set. `scripts/build_examples.py` writes examples of each.
+
+### Limits, stated plainly
+
+- **No gradients.** ONNX Runtime Web does not provide them, so the Lab has no gradient feature visualization or saliency. The average input stands in for them.
+- **Inputs:** one driven input; any other inputs get zeros. Inputs must be float32 or integer token ids.
+- **Storage:** full activations are kept up to 30 million values per room. Larger rooms keep only per-channel summaries, so they cannot host an SAE or a latent view.
+- **Speed:** everything runs in WebAssembly on one thread. Measured on this development laptop while it was heavily loaded (load average about 90): ResNet-18 at 224x224 took 1.35 s per image and the MNIST CNN 8 ms. Heavy models therefore analyse 100 items by default.

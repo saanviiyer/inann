@@ -59,6 +59,7 @@ export default function LabPage() {
   const setCustom = useCallback((p) => { setSource('custom'); setPixels(p); }, []);
   const [store, setStore] = useState(null);
   const [progress, setProgress] = useState(null);
+  const [maxItems, setMaxItems] = useState(1000);
   const [roomNames, setRoomNames] = useState([]);
   const [outs, setOuts] = useState(null);
   const [baseOuts, setBaseOuts] = useState(null);
@@ -83,6 +84,8 @@ export default function LabPage() {
       setNorm(normFromMeta(m));
       setPrep(m.input?.preprocess ?? (k.kind === 'image' && k.H === 28 ? 'mnist' : 'fit'));
       setRoomNames(lm.rooms.map((r) => r.name));
+      const perItem = lm.rooms.reduce((a, r) => a + (r.layout?.size ?? 0), 0);
+      setMaxItems(lm.summary.params > 5e6 || perItem > 2e5 ? 100 : 1000);
       setPixels(new Float32Array(k.kind === 'image' ? k.C * k.H * k.W : lm.inputSize));
       if (k.kind === 'tokens' && !dataset) setSource('custom');
       setDs(dataset);
@@ -172,11 +175,11 @@ export default function LabPage() {
     if (!model || !ds) return;
     setProgress(0);
     try {
-      const st = await collect(model, ds, kind, norm, rooms, { max: 2000, onProgress: setProgress });
+      const st = await collect(model, ds, kind, norm, rooms, { max: maxItems, onProgress: setProgress });
       setStore(st);
     } catch (e) { setError(`Dataset pass failed: ${e.message ?? e}`); }
     setProgress(null);
-  }, [model, ds, kind, norm, rooms]);
+  }, [model, ds, kind, norm, rooms, maxItems]);
   useEffect(() => { if (model && ds && !store && progress == null) analyze(); }, [model, ds, store]); // eslint-disable-line
 
   const onDatasetFiles = async (files, invert) => {
@@ -266,7 +269,7 @@ export default function LabPage() {
           />
         )}
         {model && kind && (
-          <DataCard ds={ds} store={store} progress={progress} analyze={analyze} onFiles={onDatasetFiles} kind={kind} />
+          <DataCard ds={ds} store={store} progress={progress} analyze={analyze} onFiles={onDatasetFiles} kind={kind} maxItems={maxItems} setMaxItems={setMaxItems} />
         )}
         {model && (
           <RoomsCard model={model} roomNames={roomNames} setRoomNames={(n) => { setRoomNames(n); setStore(null); setSae(null); setSteer(null); }} />
@@ -506,7 +509,7 @@ function InputCard({ model, kind, norm, setNorm, prep, setPrep, pixels, setPixel
 }
 
 // ---------- dataset ----------
-function DataCard({ ds, store, progress, analyze, onFiles, kind }) {
+function DataCard({ ds, store, progress, analyze, onFiles, kind, maxItems, setMaxItems }) {
   const [invert, setInvert] = useState(false);
   return (
     <div className="space-y-2 rounded-lg border border-line p-3 text-xs">
@@ -530,6 +533,13 @@ function DataCard({ ds, store, progress, analyze, onFiles, kind }) {
         <label className="flex items-center gap-1 text-[10px] text-dim">
           <input type="checkbox" checked={invert} onChange={(e) => setInvert(e.target.checked)} /> invert images (dark ink on light paper)
         </label>
+      )}
+      {ds && (
+        <Field label="items to analyse">
+          <select value={maxItems} onChange={(e) => setMaxItems(+e.target.value)} className={selectCls}>
+            {[50, 100, 250, 500, 1000, 2000, 5000].map((n) => <option key={n} value={n}>{n}{n >= ds.n ? ' (all)' : ''}</option>)}
+          </select>
+        </Field>
       )}
       {ds && (
         <div className="flex items-center gap-2">

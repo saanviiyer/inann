@@ -1,6 +1,8 @@
 import fs from 'node:fs';
 import * as ort from 'onnxruntime-node';
 import { initProto, decodeModel, encodeModel, summarize, candidateTensors, defaultRooms, withOutputs, withOverride, badOutputsFromError } from '../src/lib/lab/graph.js';
+if (!fs.existsSync(new URL('./.cache/fixture_res.onnx', import.meta.url))) { console.log('SKIP test_lab_fixtures.mjs: reference files missing, run `python3 scripts/lab_fixtures.py` first'); process.exit(0); }
+
 initProto(fs.readFileSync(new URL('../src/lib/lab/onnx.proto', import.meta.url),'utf8'));
 for (const [name, shape] of [['fixture_res',[1,3,32,32]],['fixture_tok',[1,10,6]]]) {
   const model = decodeModel(fs.readFileSync(new URL(`./.cache/${name}.onnx`, import.meta.url)));

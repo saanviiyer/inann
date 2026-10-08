@@ -3,6 +3,8 @@
 import fs from 'node:fs';
 import * as ort from 'onnxruntime-node';
 import { initProto, decodeModel, encodeModel, summarize, candidateTensors, defaultRooms, withOutputs, withOverride } from '../src/lib/lab/graph.js';
+if (!fs.existsSync(new URL('./.cache/lab_reference.json', import.meta.url))) { console.log('SKIP test_lab_engine.mjs: reference files missing, run `python3 scripts/lab_reference.py` first'); process.exit(0); }
+
 
 initProto(fs.readFileSync(new URL('../src/lib/lab/onnx.proto', import.meta.url), 'utf8'));
 const ref = JSON.parse(fs.readFileSync(new URL('./.cache/lab_reference.json', import.meta.url)));
