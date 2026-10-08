@@ -14,6 +14,7 @@ const ROOM_W = 6.5;
 // how a room is drawn
 export function roomGeometry(room, isFirst) {
   const L = room.layout;
+  if (room.isTokens && L.size <= 64) return { type: 'pods', n: L.size, spacing: Math.min(0.9, 9 / L.size), width: Math.min(0.9, 9 / L.size) * L.size };
   if (room.isOutput && L.size <= 32) return { type: 'pods', n: L.size, spacing: Math.min(0.9, 8 / L.size), width: Math.min(0.9, 8 / L.size) * L.size };
   if (L.kind === 'vector' && L.size <= 1024) {
     const r = Math.min(3.4, Math.max(1.2, 0.11 * Math.sqrt(L.size) * 2.2));
@@ -118,7 +119,7 @@ function AtlasRoom({ geo, data, scale, signed, y, onPick, onHover, inputPixels, 
   );
 }
 
-function SphereRoom({ geo, data, scale, signed, y, onPick, onHover, x0 = 0, pods, classes, pred }) {
+function SphereRoom({ geo, data, scale, signed, y, onPick, onHover, x0 = 0, pods, classes, pred, podLabels }) {
   const mesh = useRef();
   const g = useMemo(() => new THREE.SphereGeometry(pods ? 0.28 : geo.size, 16, 12), [geo, pods]);
   useEffect(() => {
@@ -150,10 +151,12 @@ function SphereRoom({ geo, data, scale, signed, y, onPick, onHover, x0 = 0, pods
       >
         <meshBasicMaterial toneMapped={false} />
       </instancedMesh>
-      {pods && classes && geo.n <= 20 &&
+      {pods && (podLabels || classes) && geo.n <= 64 &&
         Array.from({ length: geo.n }, (_, i) => (
           <Html key={i} position={[unitPosition(geo, i, 0)[0], 0.55, 0]} center style={{ pointerEvents: 'none' }}>
-            <div className={`text-xs font-semibold ${i === pred ? 'text-warm' : 'text-slate-400'}`}>{String(classes[i] ?? i).slice(0, 6)}</div>
+            <div className={`font-semibold ${podLabels ? 'font-mono text-sm text-glow' : i === pred ? 'text-xs text-warm' : 'text-xs text-slate-400'}`}>
+              {String((podLabels ?? classes)[i] ?? i).slice(0, 6)}
+            </div>
           </Html>
         ))}
     </group>
@@ -237,7 +240,7 @@ export default function LabScene({ rooms, values, scales, inputPixels, inputChan
           <group key={r.name}>
             {g.type === 'atlas' && <AtlasRoom {...common} onPick={pick} onHover={hov} inputPixels={i === 0 ? inputPixels : null} inputChannels={inputChannels} />}
             {g.type === 'spheres' && <SphereRoom {...common} onPick={pick} onHover={hov} />}
-            {g.type === 'pods' && <SphereRoom {...common} onPick={pick} onHover={hov} pods classes={classes} pred={pred} />}
+            {g.type === 'pods' && <SphereRoom {...common} onPick={pick} onHover={hov} pods classes={classes} pred={r.isTokens ? -1 : pred} podLabels={r.podLabels} />}
             <Html position={[-(Math.max(g.width ?? 0, 2 * (g.r ?? 0)) / 2) - 1.2, ys[i], 0]} center style={{ pointerEvents: 'none' }}>
               <div className="whitespace-nowrap text-right text-[10px] leading-tight text-dim">
                 <div className="uppercase tracking-[0.14em] text-slate-300">{r.label}</div>

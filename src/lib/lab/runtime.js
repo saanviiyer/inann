@@ -51,11 +51,15 @@ export class LabModel {
     const summary = summarize(model);
     if (summary.inputs.length === 0) throw new Error('the model has no inputs');
     const input = summary.inputs[0];
-    if (input.elem && input.elem !== 1) throw new Error(`the first input has element type ${input.elem}; only float32 inputs are supported`);
+    // float32 inputs (images, vectors) and integer token ids (int64 / int32) are supported
+    const TYPES = { 1: 'float32', 7: 'int64', 6: 'int32' };
+    if (input.elem && !TYPES[input.elem]) throw new Error(`the first input has ONNX element type ${input.elem}; supported: float32, int64 and int32 token ids`);
+    if (summary.inputs.length > 1) console.warn('inann: the model has several inputs; only the first is driven, the others get zeros');
     const cands = candidateTensors(model, summary);
     const { session, kept } = await createWithRetry(model, cands.map((c) => c.name));
     const m = new LabModel();
-    Object.assign(m, { model, summary, meta, fileName, session, input });
+    Object.assign(m, { model, summary, meta, fileName, session, input, inputType: TYPES[input.elem ?? 1] });
+    m.extraInputs = summary.inputs.slice(1);
     m.cands = cands.filter((c) => kept.includes(c.name));
     m.batchable = typeof input.dims[0] === 'string' || input.dims[0] == null || input.dims[0] <= 0;
     // symbolic dims beyond the batch need a value; meta.input.dims can supply them, else 16
@@ -85,17 +89,30 @@ export class LabModel {
   async run(xs, session = this.session, extraFeeds = {}) {
     const name = this.input.name;
     const feedFor = (arr, B) => {
-      const data = new Float32Array(B * this.inputSize);
-      arr.forEach((x, b) => data.set(x, b * this.inputSize));
-      return new ort.Tensor('float32', data, [B, ...this.inputDims]);
+      let data;
+      if (this.inputType === 'int64') {
+        data = new BigInt64Array(B * this.inputSize);
+        arr.forEach((x, b) => x.forEach((v, j) => (data[b * this.inputSize + j] = BigInt(Math.round(v)))));
+      } else {
+        data = this.inputType === 'int32' ? new Int32Array(B * this.inputSize) : new Float32Array(B * this.inputSize);
+        arr.forEach((x, b) => data.set(this.inputType === 'int32' ? Int32Array.from(x, Math.round) : x, b * this.inputSize));
+      }
+      return new ort.Tensor(this.inputType, data, [B, ...this.inputDims]);
     };
+    // any further inputs get zeros of their declared shape (batch-sized)
+    const extraZeros = (B) => Object.fromEntries((this.extraInputs ?? []).map((inp) => {
+      const dims = inp.dims.map((d, i) => (i === 0 ? B : typeof d === 'number' && d > 0 ? d : 1));
+      const n = dims.reduce((a, b) => a * b, 1);
+      const t = inp.elem === 7 ? new ort.Tensor('int64', new BigInt64Array(n), dims) : new ort.Tensor('float32', new Float32Array(n), dims);
+      return [inp.name, t];
+    }));
     if (this.batchable || xs.length === 1) {
-      const res = await session.run({ [name]: feedFor(xs, xs.length), ...extraFeeds });
+      const res = await session.run({ [name]: feedFor(xs, xs.length), ...extraZeros(xs.length), ...extraFeeds });
       return Object.fromEntries(Object.entries(res).map(([k, t]) => [k, { dims: t.dims, data: t.data }]));
     }
     // fixed batch of 1: run one at a time and stitch
     const parts = [];
-    for (const x of xs) parts.push(await session.run({ [name]: feedFor([x], 1), ...extraFeeds }));
+    for (const x of xs) parts.push(await session.run({ [name]: feedFor([x], 1), ...extraZeros(1), ...extraFeeds }));
     const out = {};
     for (const k of Object.keys(parts[0])) {
       const per = parts[0][k].data.length;

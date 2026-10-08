@@ -1,0 +1,21 @@
+{
+ "name": "Paren transformer",
+ "description": "2-layer transformer trained here to tell balanced from unbalanced strings of 16 parentheses, 99.6% held-out accuracy.",
+ "input": {
+  "kind": "tokens",
+  "vocab": [
+   "(",
+   ")"
+  ],
+  "tokenizer": "char",
+  "dims": [
+   16
+  ]
+ },
+ "classes": [
+  "unbalanced",
+  "balanced"
+ ],
+ "dataset": "paren_1000.json",
+ "test_acc": 0.996
+}

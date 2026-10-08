@@ -117,15 +117,10 @@ export function defaultRooms(model, cands) {
     if (c.length === 1 && c[0].op_type === 'Add' && c[0].input.some((x) => g.initializer.some((i) => i.name === x))) return c[0].output[0];
     return t;
   };
-  for (const c of cands) {
-    if (c.isOutput || ACTIVATIONS.has(c.op) || c.op === 'LayerNormalization') { picks.add(c.name); continue; }
-    if (LINEAR.has(c.op)) {
-      const t = follow(c.name);
-      const next = (consumers[t] ?? []).map((n) => n.op_type);
-      const feedsAct = next.some((op) => ACTIVATIONS.has(op) || op === 'BatchNormalization' || op === 'Erf' || op === 'Div' || op === 'LayerNormalization');
-      if (!feedsAct && candSet.has(t)) picks.add(t);
-    }
-  }
+  // activations, attention weights (Softmax) and normalized streams are rooms; linear outputs only
+  // when they are model outputs (branch outputs like q/k/v or projections would crowd the tower)
+  for (const c of cands) if (c.isOutput || ACTIVATIONS.has(c.op) || c.op === 'LayerNormalization') picks.add(c.name);
+  void follow;
   const order = new Map(cands.map((c, i) => [c.name, i]));
   let list = [...picks].filter((t) => order.has(t)).sort((a, b) => order.get(a) - order.get(b));
   // deep networks: keep the first activation, every residual block output (an activation fed
@@ -133,7 +128,10 @@ export function defaultRooms(model, cands) {
   if (list.length > 14) {
     const producer = {};
     g.node.forEach((n) => n.output.forEach((o) => (producer[o] = n)));
-    const blockOut = (t) => { const n = producer[t]; return n && ACTIVATIONS.has(n.op_type) && producer[n.input[0]]?.op_type === 'Add'; };
+    const inits = new Set(g.initializer.map((i) => i.name));
+    // a residual add sums two computed tensors; a bias add has an initializer operand
+    const isResidualAdd = (n) => n?.op_type === 'Add' && n.input.every((x) => !inits.has(x) && producer[x]?.op_type !== 'Constant');
+    const blockOut = (t) => { const n = producer[t]; return n && ACTIVATIONS.has(n.op_type) && isResidualAdd(producer[n.input[0]]); };
     const keep = list.filter((t, i) => i === 0 || blockOut(t) || cands[order.get(t)].isOutput);
     if (keep.length >= 3) list = keep;
     if (list.length > 14) list = list.filter((t, i) => i % Math.ceil(list.length / 12) === 0 || cands[order.get(t)].isOutput);

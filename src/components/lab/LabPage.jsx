@@ -9,7 +9,7 @@ import { Btn, Term, Cite, NotShown, Boundary } from '../ui.jsx';
 import { LabModel, layoutOf, softmax } from '../../lib/lab/runtime.js';
 import {
   inputKind, NORMS, normFromMeta, toModel, drawingToPixels, imageFileToPixels, datasetFromJson, datasetFromImages,
-  parseNpy, datasetFromNpy, modelInputOf, displayOf,
+  parseNpy, datasetFromNpy, modelInputOf, displayOf, textToIds, idsToText,
 } from '../../lib/lab/data.js';
 import { collect, channelActs, topItems, histogramOf, labelPurity } from '../../lib/lab/store.js';
 import { itemVectors, sampleRows, featuresNow, saeTransform, neuronTransform } from '../../lib/lab/saeLab.js';
@@ -21,6 +21,7 @@ export const EXAMPLES = [
   { file: 'mnist_cnn', label: 'MNIST CNN' },
   { file: 'mnist_mlp', label: 'MNIST MLP' },
   { file: 'optdigits_cnn', label: 'Tour 8x8 CNN' },
+  { file: 'paren_transformer', label: 'Paren transformer' },
 ];
 
 const unitOf = (L, i) => (L.kind === 'spatial' ? { c: Math.floor(i / L.P), p: i % L.P } : L.kind === 'seq' ? { c: i % L.C, p: Math.floor(i / L.C) } : { c: i, p: 0 });
@@ -69,6 +70,7 @@ export default function LabPage() {
   const [frameNonce, setFrameNonce] = useState(0);
   const [focusRoom, setFocusRoom] = useState(null);
   const runId = useRef(0);
+  const rightPanel = useRef(null);
 
   // ---------- loading ----------
   const loadModel = useCallback(async (bytes, m = {}, fileName = 'model.onnx', dataset = null) => {
@@ -76,12 +78,13 @@ export default function LabPage() {
     setStore(null); setSae(null); setSteer(null); setSelected(null); setOuts(null);
     try {
       const lm = await LabModel.load(bytes, m, fileName);
-      const k = inputKind(lm.inputDims, m);
+      const k = inputKind(lm.inputDims, m, lm.inputType);
       setModel(lm); setMeta(m); setKind(k);
       setNorm(normFromMeta(m));
       setPrep(m.input?.preprocess ?? (k.kind === 'image' && k.H === 28 ? 'mnist' : 'fit'));
       setRoomNames(lm.rooms.map((r) => r.name));
       setPixels(new Float32Array(k.kind === 'image' ? k.C * k.H * k.W : lm.inputSize));
+      if (k.kind === 'tokens' && !dataset) setSource('custom');
       setDs(dataset);
       setSource(dataset ? 'item' : 'custom');
       setItemRaw(0);
@@ -200,15 +203,21 @@ export default function LabPage() {
   // ---------- 3D values ----------
   const inputRoom = useMemo(() => {
     if (!model || !kind) return null;
-    const dims = kind.kind === 'image' ? [kind.C, kind.H, kind.W] : model.inputDims;
-    return { name: '__input', op: 'Input', dims, layout: layoutOf(dims), isInputRoom: true };
+    const dims = kind.kind === 'image' ? [kind.C, kind.H, kind.W] : kind.kind === 'tokens' ? [kind.T] : model.inputDims;
+    return { name: '__input', op: 'Input', dims, layout: layoutOf(dims), isInputRoom: true, isTokens: kind.kind === 'tokens' };
   }, [model, kind]);
-  const sceneRooms = useMemo(() => (inputRoom ? labelRooms([inputRoom, ...rooms]) : []), [inputRoom, rooms]);
+  const sceneRooms = useMemo(() => {
+    if (!inputRoom) return [];
+    const r = { ...inputRoom };
+    if (r.isTokens && xFinal) r.podLabels = Array.from(xFinal, (v) => (kind.vocab ? kind.vocab[v] ?? '?' : String(v)));
+    return labelRooms([r, ...rooms]);
+  }, [inputRoom, rooms, xFinal, kind]);
   const values = useMemo(() => {
     const v = {};
     if (!outs) return v;
     for (const r of rooms) if (outs[r.name]) v[r.name] = r.isOutput && r.layout.size <= 32 ? Float32Array.from(maybeSoftmax(outs[r.name].data)) : outs[r.name].data;
-    if (inputRoom && kind?.kind !== 'image' && xFinal) v.__input = xFinal;
+    if (inputRoom && kind?.kind === 'tokens' && xFinal) v.__input = Float32Array.from(xFinal, () => 0.6);
+    else if (inputRoom && kind?.kind !== 'image' && xFinal) v.__input = xFinal;
     return v;
   }, [outs, rooms, inputRoom, kind, xFinal]);
   const scales = useMemo(() => {
@@ -219,7 +228,8 @@ export default function LabPage() {
       if (st) { s[r.name] = st.scale; s[`${r.name}:signed`] = st.signed; }
       else if (values[r.name]) { let m = 0; for (const v of values[r.name]) m = Math.max(m, Math.abs(v)); s[r.name] = m || 1; s[`${r.name}:signed`] = values[r.name].some((v) => v < 0); }
     }
-    if (values.__input) { let m = 0; for (const v of values.__input) m = Math.max(m, Math.abs(v)); s.__input = m || 1; s['__input:signed'] = values.__input.some((v) => v < 0); }
+    if (values.__input && kind?.kind === 'tokens') s.__input = 1;
+    else if (values.__input) { let m = 0; for (const v of values.__input) m = Math.max(m, Math.abs(v)); s.__input = m || 1; s['__input:signed'] = values.__input.some((v) => v < 0); }
     return s;
   }, [rooms, store, values]);
 
@@ -237,6 +247,7 @@ export default function LabPage() {
 
   const onSelect = useCallback((s) => { if (s.room !== '__input') setSelected(s); }, []);
   useEffect(() => { if (sae) setFrameNonce((n) => n + 1); }, [sae?.room, sae?.sae]); // eslint-disable-line
+  useEffect(() => { if (selected) rightPanel.current?.scrollTo({ top: 0, behavior: 'smooth' }); }, [selected]);
   const onHover = useCallback((h) => setHover(h), []);
 
   // ---------- render ----------
@@ -304,7 +315,7 @@ export default function LabPage() {
         )}
       </section>
 
-      <aside className="scroll-thin order-3 w-full shrink-0 space-y-3 border-line p-4 lg:w-[23rem] lg:overflow-y-auto lg:border-l">
+      <aside ref={rightPanel} className="scroll-thin order-3 w-full shrink-0 space-y-3 border-line p-4 lg:w-[23rem] lg:overflow-y-auto lg:border-l">
         <Boundary key={selected ? `${selected.room}:${selected.index}:${!!selected.sae}` : 'none'}>
           <UnitCard
             model={model} sel={selected} outs={outs} baseOuts={baseOuts} store={store} ds={ds} kind={kind} sae={sae} saeNow={saeNow}
@@ -312,7 +323,7 @@ export default function LabPage() {
             onPickFeature={(f) => setSelected({ room: sae.room, index: f, sae: true })}
           />
         </Boundary>
-        {model && <Boundary><SaeCard model={model} rooms={rooms} store={store} sae={sae} setSae={setSae} ds={ds} kind={kind} norm={norm} onShow={() => { setView('space'); }} saeNow={saeNow} onPickFeature={(f) => setSelected({ room: sae.room, index: f, sae: true })} /></Boundary>}
+        {model && <Boundary><SaeCard model={model} rooms={sceneRooms.slice(1)} store={store} sae={sae} setSae={setSae} ds={ds} kind={kind} norm={norm} onShow={() => { setView('space'); }} saeNow={saeNow} onPickFeature={(f) => setSelected({ room: sae.room, index: f, sae: true })} /></Boundary>}
       </aside>
     </main>
   );
@@ -419,7 +430,9 @@ function InputCard({ model, kind, norm, setNorm, prep, setPrep, pixels, setPixel
   return (
     <div className="space-y-2 rounded-lg border border-line p-3">
       <div className="text-sm text-slate-100">Input</div>
-      {kind.kind === 'image' ? (
+      {kind.kind === 'tokens' ? (
+        <TokenInput kind={kind} ids={pixels} setIds={setPixels} />
+      ) : kind.kind === 'image' ? (
         <>
           <div className="flex items-start gap-3">
             <DrawBox onDrawn={(c) => setPixels(drawingToPixels(c, kind, prep))} />
@@ -629,7 +642,22 @@ function UnitBody({ model, sel, outs, baseOuts, store, ds, kind, sae, saeNow, st
       )}
       {top.length > 0 && ds && (
         <div>
-          <div className="mb-1 text-xs text-slate-200">Top 12 items {L.P > 1 && <span className="text-dim">(box: where it fired)</span>}</div>
+          <div className="mb-1 text-xs text-slate-200">Top 12 items {L.P > 1 && <span className="text-dim">({kind.kind === 'tokens' ? 'highlight' : 'box'}: where it fired)</span>}</div>
+          {kind.kind === 'tokens' ? (
+            <div className="space-y-0.5">
+              {top.map((i) => {
+                const a = args(i);
+                const tokPos = L.kind === 'seq' ? a : L.kind === 'spatial' ? Math.floor(a / L.W) : null;
+                return (
+                  <button key={i} className="flex w-full items-center gap-2 text-left" onClick={() => setItem(i)} title="load this item">
+                    <TokenThumb ids={ds.item(i)} kind={kind} pos={tokPos} />
+                    <span className="text-[9px] text-dim">{labels ? `${classes?.[labels[i]] ?? labels[i]} · ` : ''}{acts[i].toFixed(2)}</span>
+                  </button>
+                );
+              })}
+              {L.kind === 'spatial' && <div className="text-[10px] text-dim">For a [heads, query, key] map the highlight is the query token.</div>}
+            </div>
+          ) : (
           <div className="grid grid-cols-6 gap-1">
             {top.map((i) => (
               <button key={i} className="text-center" onClick={() => setItem(i)} title="load this item">
@@ -639,6 +667,7 @@ function UnitBody({ model, sel, outs, baseOuts, store, ds, kind, sae, saeNow, st
               </button>
             ))}
           </div>
+          )}
           {pur && <div className="mt-1 text-[11px] text-slate-300">{pur.count} of its top 12 are labeled {classes?.[pur.label] ?? pur.label}.</div>}
           {kind.kind === 'image' && <AverageInput ds={ds} kind={kind} top={top} acts={acts} />}
           {L.P > 1 && kind.kind === 'image' && <div className="text-[10px] text-dim">Boxes scale the layer's grid onto the image; they show roughly where, not the exact receptive field.</div>}
@@ -683,7 +712,11 @@ function SaeCard({ model, rooms, store, sae, setSae, ds, kind, norm, onShow, sae
   const [steps, setSteps] = useState(1500);
   const [train, setTrain] = useState(null); // {curve, dead, step, phase}
   const worker = useRef(null);
-  useEffect(() => { if (!room && candidates.length) setRoom(candidates[candidates.length - 1].name); }, [candidates.length]); // eslint-disable-line
+  const candKey = candidates.map((c) => c.name).join('|');
+  useEffect(() => {
+    // default to the deepest hidden layer; reset whenever the model or its rooms change
+    if (candidates.length && !candidates.some((c) => c.name === room)) setRoom(candidates[candidates.length - 1].name);
+  }, [candKey]); // eslint-disable-line
   const r = rooms.find((x) => x.name === room);
   const D = r?.layout.C ?? 0;
   useEffect(() => { if (D) setK(Math.max(1, Math.min(16, Math.round(D / 8)))); }, [D]);
@@ -778,7 +811,7 @@ function SaeCard({ model, rooms, store, sae, setSae, ds, kind, norm, onShow, sae
         <>
           <Field label="layer">
             <select value={room} onChange={(e) => setRoom(e.target.value)} className={`${selectCls} max-w-44`}>
-              {candidates.map((c) => <option key={c.name} value={c.name}>{c.op} {c.dims.join('×')}</option>)}
+              {candidates.map((c) => <option key={c.name} value={c.name}>{c.label ?? c.op} · {c.dims.join('×')}</option>)}
             </select>
           </Field>
           <div className="text-[10px] text-dim">
@@ -968,6 +1001,40 @@ function WrittenBy({ sae, c, onPick }) {
         ))}
       </div>
       <div className="mt-1 text-[10px] text-dim">decoder weight on this channel times the feature's total activation over the dataset</div>
+    </div>
+  );
+}
+
+function TokenInput({ kind, ids, setIds }) {
+  const [text, setText] = useState('');
+  const [info, setInfo] = useState(null);
+  const shown = ids ? idsToText(ids, kind) : '';
+  const apply = (t) => { setText(t); const r = textToIds(t, kind); setIds(r.ids); setInfo(r); };
+  return (
+    <div className="space-y-1.5">
+      <input
+        value={text}
+        onChange={(e) => apply(e.target.value)}
+        placeholder={kind.vocab ? `type using: ${kind.vocab.join(' ')}` : 'token ids, separated by spaces'}
+        className="w-full rounded border border-line bg-panel px-2 py-1 font-mono text-xs text-slate-100 placeholder:text-dim"
+      />
+      <div className="font-mono text-sm tracking-wider text-glow">{shown}</div>
+      <div className="text-[10px] text-dim">
+        {kind.T} tokens. {kind.vocab ? `Characters outside the vocabulary are dropped; short input is padded with "${kind.vocab[0]}".` : 'No vocabulary was given, so type ids directly.'}
+        {info?.dropped ? ` ${info.dropped} extra tokens were cut.` : ''}
+      </div>
+      <Btn onClick={() => { const n = kind.vocab?.length ?? 2; apply(Array.from({ length: kind.T }, () => (kind.vocab ? kind.vocab[Math.floor(Math.random() * n)] : Math.floor(Math.random() * n))).join(kind.vocab ? '' : ' ')); }}>random</Btn>
+    </div>
+  );
+}
+
+// A token item as text, with the position where a unit fired highlighted.
+function TokenThumb({ ids, kind, pos }) {
+  return (
+    <div className="rounded bg-[#070a12] px-1 py-0.5 font-mono text-[10px] leading-tight tracking-tight text-slate-300">
+      {Array.from(ids).map((v, j) => (
+        <span key={j} className={j === pos ? 'rounded-sm bg-warm/80 text-black' : ''}>{kind.vocab ? kind.vocab[v] ?? '?' : `${v} `}</span>
+      ))}
     </div>
   );
 }

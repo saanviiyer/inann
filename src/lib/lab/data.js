@@ -5,7 +5,11 @@ import { toDigit } from '../digitize.js';
 
 // ---------- what kind of input does the model take? ----------
 // Returns { kind: 'image', C, H, W, layout: 'nchw'|'nhwc'|'flat' } or { kind: 'vector' }.
-export function inputKind(dims, meta = {}) {
+export function inputKind(dims, meta = {}, inputType = 'float32') {
+  if (meta.input?.kind === 'tokens' || inputType !== 'float32') {
+    const vocab = meta.input?.vocab ?? null;
+    return { kind: 'tokens', T: dims.reduce((a, b) => a * b, 1), vocab, tokenizer: meta.input?.tokenizer ?? (vocab ? 'char' : 'ids') };
+  }
   if (meta.input?.kind === 'vector') return { kind: 'vector' };
   if (dims.length === 3 && (dims[0] === 1 || dims[0] === 3)) return { kind: 'image', C: dims[0], H: dims[1], W: dims[2], layout: 'nchw' };
   if (dims.length === 3 && (dims[2] === 1 || dims[2] === 3)) return { kind: 'image', C: dims[2], H: dims[0], W: dims[1], layout: 'nhwc' };
@@ -122,6 +126,14 @@ export function datasetFromJson(json, name) {
   const u8 = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
   const size = json.shape.reduce((a, b) => a * b, 1);
+  if (json.dtype === 'int32' || json.dtype === 'float32') {
+    // token ids or raw vectors, fed to the model as they are
+    const arr = json.dtype === 'int32' ? new Int32Array(u8.buffer) : new Float32Array(u8.buffer);
+    return {
+      name, n: arr.length / size, size, shape: json.shape, labels: json.labels, classes: json.classes, source: json.source,
+      raw: true, tokens: json.dtype === 'int32', item: (i) => arr.subarray(i * size, (i + 1) * size),
+    };
+  }
   const n = u8.length / size;
   return {
     name, n, size, shape: json.shape, labels: json.labels, classes: json.classes, source: json.source,
@@ -201,9 +213,22 @@ export function modelInputOf(ds, i, kind, norm) {
 }
 export function displayOf(ds, i, kind) {
   const v = ds.item(i);
-  if (!ds.raw) return v;
+  if (!ds.raw || ds.tokens || kind.kind === 'tokens') return v;
   let lo = Infinity, hi = -Infinity;
   for (const t of v) { lo = Math.min(lo, t); hi = Math.max(hi, t); }
   const s = Float32Array.from(v, (t) => (t - lo) / (hi - lo || 1));
   return kind.kind === 'image' && kind.layout === 'nhwc' ? hwcToChw(s, kind) : s;
 }
+
+// ---------- tokens ----------
+// Character tokenizer over the model's vocabulary (from its meta.json). Unknown characters are
+// dropped; the result is cut or padded (with the first vocabulary entry) to the model's length.
+export function textToIds(text, kind) {
+  const ids = [];
+  if (kind.tokenizer === 'char' && kind.vocab) for (const ch of text) { const k = kind.vocab.indexOf(ch); if (k >= 0) ids.push(k); }
+  else for (const t of text.split(/[\s,]+/)) if (t !== '' && !isNaN(+t)) ids.push(+t);
+  const out = new Float32Array(kind.T);
+  for (let i = 0; i < kind.T; i++) out[i] = ids[i] ?? 0;
+  return { ids: out, used: Math.min(ids.length, kind.T), dropped: Math.max(0, ids.length - kind.T) };
+}
+export const idsToText = (ids, kind) => Array.from(ids, (v) => (kind.vocab ? kind.vocab[v] ?? '?' : `${v} `)).join('');
