@@ -1781,8 +1781,9 @@ function LabReport({ store, rooms, summaries, sae, onPick }) {
   const acc = store.labels ? store.preds.filter((p, i) => p === store.labels[i]).length / store.N : null;
   return (
     <div className="h-full overflow-y-auto scroll-thin p-4 pt-24 text-xs">
-      <div className="mb-3 text-sm text-slate-100">
+      <div className="mb-3 flex items-center gap-3 text-sm text-slate-100">
         Model report over {store.N} items{acc != null ? `, accuracy ${(100 * acc).toFixed(1)}%` : ''}
+        <Btn onClick={() => downloadCsv(summaries)}>Download CSV of every unit</Btn>
       </div>
       <div className="space-y-3">
         {groups.map((g) => {
@@ -1919,4 +1920,17 @@ function SweepChart({ res, onPick }) {
       <div className="text-[10px] text-dim">Held-out variance explained by k. Larger k reconstructs better but each feature carries less on its own (Gao et al. 2024). Click a row to use that k.</div>
     </div>
   );
+}
+
+// One row per channel / SAE feature with its measured statistics, for analysis elsewhere.
+function downloadCsv(summaries) {
+  const q = (v) => (v == null ? '' : /[",\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v));
+  const rows = [['layer', 'tensor', 'kind', 'index', 'fires_on_fraction', 'top12_label', 'top12_purity', 'summary', 'explanation', 'explanation_score']];
+  for (const e of summaries) {
+    rows.push([e.roomLabel, e.room, e.sae ? 'sae_feature' : 'channel', e.c, e.summary.freq.toFixed(4), e.className ?? '', e.summary.purity ? e.summary.purity.value.toFixed(3) : '', e.summary.text, e.expl?.explanation ?? '', e.expl ? e.expl.score : '']);
+  }
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([rows.map((r) => r.map(q).join(',')).join('\n')], { type: 'text/csv' }));
+  a.download = 'inann_units.csv';
+  a.click();
 }
