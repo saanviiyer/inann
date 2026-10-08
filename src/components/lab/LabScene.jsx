@@ -53,6 +53,8 @@ export function unitPosition(geo, i, y) {
   return [(ax + 0.5) * geo.px - geo.width / 2, y + 0.05, (ay + 0.5) * geo.px - geo.depth / 2];
 }
 function spherePos(geo, i, y) {
+  // a precomputed layout (e.g. SAE features placed by decoder similarity) wins over the spiral
+  if (geo.pos) return [geo.pos[i * 2] * geo.r, y + 0.12 * Math.sin(i * 1.3), geo.pos[i * 2 + 1] * geo.r];
   const r = geo.r * Math.sqrt((i + 0.5) / geo.n), t = i * 2.39996;
   return [r * Math.cos(t), y + 0.12 * Math.sin(i * 1.3), r * Math.sin(t)];
 }
@@ -298,7 +300,7 @@ export default function LabScene({ rooms, values, scales, inputPixels, inputChan
   const ys = rooms.map((_, i) => i * GAP);
   const height = (rooms.length - 1) * GAP;
   const saeIdx = sae ? rooms.findIndex((r) => r.name === sae.room) : -1;
-  const saeGeo = useMemo(() => (sae ? { type: 'spheres', n: sae.F, r: Math.min(3.6, Math.max(1.6, 0.1 * Math.sqrt(sae.F) * 2)), size: Math.min(0.12, 2.2 / Math.sqrt(sae.F) / 2.5) } : null), [sae?.F]); // eslint-disable-line
+  const saeGeo = useMemo(() => (sae ? { type: 'spheres', n: sae.F, r: Math.min(3.6, Math.max(1.6, 0.1 * Math.sqrt(sae.F) * 2)), size: Math.min(0.12, 2.2 / Math.sqrt(sae.F) / 2.5), pos: sae.layout2d ?? null } : null), [sae?.F, sae?.layout2d]); // eslint-disable-line
   const saeX = saeIdx >= 0 ? (geos[saeIdx].width ?? ROOM_W) / 2 + 2.2 + saeGeo.r : 0;
 
   // rebuilt only when a new fly-to is requested, so re-renders (hover, new values) do not restart it

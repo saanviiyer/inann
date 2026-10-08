@@ -290,14 +290,28 @@ export default function LabPage() {
   const pred = probs ? probs.indexOf(Math.max(...probs)) : null;
   const classes = meta.classes ?? ds?.classes ?? null;
 
+  // SAE features placed by decoder similarity: the top two principal directions of the decoder
+  // rows, squashed into the unit disk, so features that write similar things sit together
+  const saeLayout = useMemo(() => {
+    if (!sae) return null;
+    const { F, D, Wd } = sae.sae;
+    const rows = Array.from({ length: F }, (_, f) => Wd.subarray(f * D, (f + 1) * D));
+    const P = pcaOf(rows);
+    const out = new Float32Array(F * 2);
+    let m = 0;
+    for (const q of P.pts) m = Math.max(m, Math.hypot(q[0], q[1]));
+    P.pts.forEach((q, f) => { out[f * 2] = q[0] / (m || 1); out[f * 2 + 1] = q[1] / (m || 1); });
+    return out;
+  }, [sae?.sae]); // eslint-disable-line
+
   const saeNow = useMemo(() => {
     if (!sae || !outs?.[sae.room]) return null;
     const L = model.describe(sae.room).layout;
     const f = featuresNow(sae.sae, outs[sae.room].data, L);
     const { D, Wd } = sae.sae;
     const links = (fi) => Array.from({ length: D }, (_, c) => ({ c, w: Wd[fi * D + c] })).sort((a, b) => Math.abs(b.w) - Math.abs(a.w)).slice(0, Math.min(12, D));
-    return { room: sae.room, F: sae.sae.F, k: sae.sae.k, featNow: f.max, argNow: f.arg, scale: sae.featScale, links };
-  }, [sae, outs, model]);
+    return { room: sae.room, F: sae.sae.F, k: sae.sae.k, featNow: f.max, argNow: f.arg, scale: sae.featScale, links, layout2d: saeLayout };
+  }, [sae, outs, model, saeLayout]);
 
   const onSelect = useCallback((s) => { if (s.room !== '__input') setSelected(s); }, []);
   // the answer traced back through the strongest positive contributions, layer by layer
