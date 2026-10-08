@@ -16,6 +16,7 @@ import { itemVectors, sampleRows, featuresNow, saeTransform, neuronTransform } f
 import { toJSON, fromJSON } from '../../lib/lab/saeCore.js';
 import { linearSource, incomingWeights, preFlattenTensor } from '../../lib/lab/graph.js';
 import { PixelGrid } from '../ui.jsx';
+import { describeUnit, searchUnits } from '../../lib/lab/summary.js';
 import { pcaOf, knnAccOf, separationOf } from '../../lib/latent.js';
 
 const BASE = import.meta.env.BASE_URL;
@@ -247,10 +248,36 @@ export default function LabPage() {
     if (!sae || !outs?.[sae.room]) return null;
     const L = model.describe(sae.room).layout;
     const f = featuresNow(sae.sae, outs[sae.room].data, L);
-    return { room: sae.room, F: sae.sae.F, k: sae.sae.k, featNow: f.max, argNow: f.arg, scale: sae.featScale };
+    const { D, Wd } = sae.sae;
+    const links = (fi) => Array.from({ length: D }, (_, c) => ({ c, w: Wd[fi * D + c] })).sort((a, b) => Math.abs(b.w) - Math.abs(a.w)).slice(0, Math.min(12, D));
+    return { room: sae.room, F: sae.sae.F, k: sae.sae.k, featNow: f.max, argNow: f.arg, scale: sae.featScale, links };
   }, [sae, outs, model]);
 
   const onSelect = useCallback((s) => { if (s.room !== '__input') setSelected(s); }, []);
+  const summaries = useMemo(() => {
+    if (!store) return [];
+    const out = [];
+    const labelled = labelRooms([{ isInputRoom: true, op: 'Input' }, ...rooms]).slice(1);
+    labelled.forEach((r) => {
+      const st = store.stats[r.name];
+      if (!st || r.isOutput) return;
+      for (let c = 0; c < st.layout.C && c < 4096; c++) {
+        const acts = channelActs(store, r.name, c);
+        const sm = describeUnit(acts, (i) => st.chArg[i * st.layout.C + c], st.layout, store.labels, classes);
+        out.push({ key: `${r.name}:${c}`, room: r.name, roomLabel: r.label, index: st.layout.idx(c, 0), c, summary: sm, className: sm.purity ? classes?.[sm.purity.label] ?? sm.purity.label : null });
+      }
+    });
+    if (sae?.stats) {
+      const L = model.describe(sae.room).layout, F = sae.sae.F;
+      for (let f = 0; f < F; f++) {
+        const acts = Float32Array.from({ length: sae.N }, (_, i) => sae.stats.featMax[i * F + f]);
+        if (!acts.some((v) => v > 0)) continue;
+        const sm = describeUnit(acts, (i) => sae.stats.featArg[i * F + f], L, store.labels, classes);
+        out.push({ key: `sae:${f}`, room: sae.room, roomLabel: 'SAE', index: f, c: f, sae: true, summary: sm, className: sm.purity ? classes?.[sm.purity.label] ?? sm.purity.label : null });
+      }
+    }
+    return out;
+  }, [store, rooms, sae, classes, model]);
   useEffect(() => { if (sae) setFrameNonce((n) => n + 1); }, [sae?.room, sae?.sae]); // eslint-disable-line
   useEffect(() => { if (selected) rightPanel.current?.scrollTo({ top: 0, behavior: 'smooth' }); }, [selected]);
   const onHover = useCallback((h) => setHover(h), []);
@@ -296,6 +323,7 @@ export default function LabPage() {
         <div className="pointer-events-none absolute bottom-3 left-3 rounded bg-black/50 px-2 py-1 text-[11px] text-slate-300">
           {hover && outs ? <HoverText hover={hover} model={model} outs={outs} saeNow={saeNow} /> : view === 'space' ? 'Drag to orbit, scroll to zoom, click any unit.' : 'Each mark is one dataset item, placed by PCA of the chosen layer.'}
         </div>
+        {summaries.length > 0 && <LabSearch entries={summaries} classes={classes} onPick={(e) => { setView('space'); setSelected({ room: e.room, index: e.index, sae: e.sae }); setFocusRoom({ i: sceneRooms.findIndex((r) => r.name === e.room), sae: e.sae, nonce: Math.random() }); }} />}
         {view === 'space' && sceneRooms.length > 3 && (
           <div className="absolute right-3 top-14 z-20 max-h-[70%] space-y-px overflow-y-auto scroll-thin rounded-md border border-line bg-panel/80 p-1 text-[10px]">
             <div className="px-1 pb-0.5 text-dim">fly to</div>
@@ -637,6 +665,7 @@ function UnitBody({ model, sel, outs, baseOuts, store, ds, kind, sae, saeNow, st
   const pur = acts && labels ? labelPurity(acts, labels, 12) : null;
   const max = acts ? Math.max(...acts) : Math.abs(chNow) || 1;
   const lo = acts ? Math.min(0, Math.min(...acts)) : 0;
+  const summary = acts ? describeUnit(acts, args, L, labels, classes).text : null;
 
   const steering = steer && steer.room === sel.room && (isFeat ? steer.sae && steer.feature === c : !steer.sae && steer.c === c);
   const [scope, setScope] = useState('channel');
@@ -656,6 +685,7 @@ function UnitBody({ model, sel, outs, baseOuts, store, ds, kind, sae, saeNow, st
         </div>
         <Btn onClick={onClose}>Close</Btn>
       </div>
+      {summary && <div className="rounded bg-glow/5 px-2 py-1 text-[11px] text-slate-200">{summary}<span className="ml-1 text-dim">(measured)</span></div>}
       <div className="flex items-baseline gap-2">
         <span className="text-3xl font-semibold text-glow">{chNow.toFixed(2)}</span>
         <span className="text-xs text-dim">{L.P > 1 ? 'max over positions for this input' : 'for this input'}{acts ? `, ${max ? Math.round((chNow / max) * 100) : 0}% of its dataset max` : ''}</span>
@@ -1127,6 +1157,34 @@ function Weights({ model, room, c }) {
               out.set(w.data);
               return out;
             }, `${w.data.length} incoming weights in reading order`)}
+    </div>
+  );
+}
+
+function LabSearch({ entries, classes, onPick }) {
+  const [q, setQ] = useState('');
+  const [open, setOpen] = useState(false);
+  const res = useMemo(() => searchUnits(q, entries, classes), [q, entries, classes]);
+  return (
+    <div className="absolute left-3 top-12 z-30 w-72">
+      <input
+        value={q} onChange={(e) => { setQ(e.target.value); setOpen(true); }} onFocus={() => setOpen(true)} onBlur={() => setTimeout(() => setOpen(false), 150)}
+        onKeyDown={(e) => { if (e.key === 'Enter' && res[0]) { onPick(res[0]); setOpen(false); } }}
+        placeholder='find units: a class ("5"), "upper left", "token 3", "rare"'
+        className="w-full rounded-md border border-line bg-panel px-2.5 py-1 text-xs text-slate-100 placeholder:text-dim focus:border-glow/50 focus:outline-none"
+      />
+      {open && q.trim() && (
+        <div className="mt-1 max-h-80 overflow-y-auto rounded-md border border-line bg-panel shadow-xl">
+          {res.length === 0 && <div className="px-3 py-2 text-xs text-dim">No measured summary matches.</div>}
+          {res.map((e) => (
+            <button key={e.key} onMouseDown={() => onPick(e)} className="block w-full border-b border-line/60 px-3 py-1.5 text-left hover:bg-glow/10">
+              <div className="text-xs text-slate-100">{e.sae ? `SAE feature ${e.index}` : `${e.roomLabel}, channel ${e.c}`}</div>
+              <div className="text-[10px] text-slate-400">{e.summary.text}</div>
+            </button>
+          ))}
+          <div className="px-3 py-1 text-[10px] text-dim">Matches measured summaries (labels, frequency, position), not language-model explanations.</div>
+        </div>
+      )}
     </div>
   );
 }

@@ -179,6 +179,29 @@ function Marker({ pos, size = 0.25 }) {
 }
 
 // Frame the whole tower, or (focus) one room. Tall towers open on their first few rooms.
+// lines from an SAE feature to the channels its decoder writes most; orange adds, blue subtracts
+function Beams({ from, targets }) {
+  const geo = useMemo(() => {
+    const g = new THREE.BufferGeometry();
+    const pos = [], col = [];
+    const m = Math.max(...targets.map((t) => Math.abs(t.w)), 1e-9);
+    targets.forEach(({ pos: p, w }) => {
+      pos.push(...from, ...p);
+      const a = 0.3 + 0.7 * Math.abs(w) / m;
+      const [r, gg, b] = w >= 0 ? [1, 0.71, 0.28] : [0.36, 0.55, 1];
+      col.push(r * a * 0.4, gg * a * 0.4, b * a * 0.4, r * a, gg * a, b * a);
+    });
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+    return g;
+  }, [from, targets]);
+  return (
+    <lineSegments geometry={geo}>
+      <lineBasicMaterial vertexColors transparent blending={THREE.AdditiveBlending} depthWrite={false} toneMapped={false} />
+    </lineSegments>
+  );
+}
+
 function Frame({ height, nonce, cx = 0, width = ROOM_W, focus }) {
   const { camera, controls, size } = useThree();
   const fly = useRef(null);
@@ -268,6 +291,12 @@ export default function LabScene({ rooms, values, scales, inputPixels, inputChan
         </group>
       )}
       {marker && <Marker {...marker} />}
+      {selected?.sae && sae?.links && saeIdx >= 0 && (
+        <Beams
+          from={(() => { const p = spherePos(saeGeo, selected.index, ys[saeIdx]); return [p[0] + saeX, p[1], p[2]]; })()}
+          targets={sae.links(selected.index).map(({ c, w }) => ({ pos: unitPosition(geos[saeIdx], rooms[saeIdx].layout.idx(c, Math.floor(rooms[saeIdx].layout.P / 2)), ys[saeIdx]), w }))}
+        />
+      )}
       <OrbitControls makeDefault enableDamping dampingFactor={0.1} />
       <Frame
         focus={focusRoom != null && rooms[focusRoom.i] ? { y: ys[focusRoom.i], width: geos[focusRoom.i].width ?? ROOM_W, nonce: focusRoom.nonce, x: focusRoom.sae && saeIdx >= 0 ? saeX : 0 } : null}
