@@ -428,7 +428,7 @@ export default function LabPage() {
 
       <section className="relative order-1 h-[62vh] min-w-0 shrink-0 overflow-hidden lg:order-2 lg:h-auto lg:flex-1 lg:shrink">
         <div className="absolute left-3 top-3 z-20 flex overflow-hidden rounded-md border border-line text-xs">
-          {[['space', '3D space'], ['latent', 'Latent space']].map(([k, t]) => (
+          {[['space', '3D space'], ['gallery', 'Gallery'], ['latent', 'Latent space']].map(([k, t]) => (
             <button key={k} onClick={() => setView(k)} className={`px-2.5 py-1 ${view === k ? 'bg-glow/15 text-glow' : 'bg-panel text-dim hover:text-slate-200'}`}>{t}</button>
           ))}
         </div>
@@ -440,9 +440,13 @@ export default function LabPage() {
             />
           </Boundary>
         )}
+        {view === 'gallery' && (
+          <LabGallery store={store} rooms={sceneRooms.slice(1)} sae={sae} ds={ds} kind={kind} classes={classes} explFor={explFor}
+            onPick={(sel) => setSelected(sel)} selected={selected} />
+        )}
         {view === 'latent' && <LabLatent model={model} store={store} rooms={rooms} sae={sae} outs={outs} ds={ds} setItem={setItem} classes={classes} />}
         <div className="pointer-events-none absolute bottom-3 left-3 rounded bg-black/50 px-2 py-1 text-[11px] text-slate-300">
-          {hover && outs ? <HoverText hover={hover} model={model} outs={outs} saeNow={saeNow} /> : view === 'space' ? 'Drag to orbit, scroll to zoom, click any unit.' : 'Each mark is one dataset item, placed by PCA of the chosen layer.'}
+          {hover && outs ? <HoverText hover={hover} model={model} outs={outs} saeNow={saeNow} /> : view === 'space' ? 'Drag to orbit, scroll to zoom, click any unit.' : view === 'gallery' ? 'Click a card to open that unit\'s room.' : 'Each mark is one dataset item, placed by PCA of the chosen layer.'}
         </div>
         {summaries.length > 0 && <LabSearch entries={summaries} classes={classes} onPick={(e) => { setView('space'); setSelected({ room: e.room, index: e.index, sae: e.sae }); setFocusRoom({ i: sceneRooms.findIndex((r) => r.name === e.room), sae: e.sae, nonce: Math.random() }); }} />}
         {view === 'space' && sceneRooms.length > 3 && (
@@ -1506,6 +1510,96 @@ function OcclusionView({ model, kind, norm, pixels, target, label, deps, raw }) 
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// Every unit of a layer at once, in the spirit of OpenAI Microscope: each card shows what the
+// unit fires on (the activation-weighted average of its top items, or its top token string) and
+// its measured summary. Click a card to open its room.
+function LabGallery({ store, rooms, sae, ds, kind, classes, explFor, onPick, selected }) {
+  const options = useMemo(() => {
+    const o = rooms.filter((r) => store?.stats[r.name] && !r.isOutput).map((r) => ({ key: r.name, label: `${r.label} · ${r.dims.join('×')}`, n: store.stats[r.name].layout.C }));
+    if (sae?.stats) o.push({ key: '__sae', label: `SAE features (${sae.sae.F})`, n: sae.sae.F });
+    return o;
+  }, [rooms, store, sae]);
+  const [key, setKey] = useState('');
+  const [sort, setSort] = useState('index');
+  const [limit, setLimit] = useState(96);
+  useEffect(() => { if (!options.find((o) => o.key === key) && options.length) setKey(options[0].key); }, [options]); // eslint-disable-line
+  const cards = useMemo(() => {
+    if (!store || !key || !ds) return [];
+    const isSae = key === '__sae';
+    const room = isSae ? sae.room : key;
+    const st = store.stats[room], L = st.layout;
+    const n = isSae ? sae.sae.F : L.C;
+    const out = [];
+    for (let c = 0; c < n; c++) {
+      const acts = isSae ? Float32Array.from({ length: sae.N }, (_, i) => sae.stats.featMax[i * sae.sae.F + c]) : channelActs(store, room, c);
+      const on = Array.from(acts).filter((v) => v > 0).length;
+      if (isSae && !on) continue;
+      const args = isSae ? (i) => sae.stats.featArg[i * sae.sae.F + c] : (i) => st.chArg[i * L.C + c];
+      const sm = describeUnit(acts, args, L, store.labels, classes);
+      out.push({ c, acts, args, sm, on, isSae, room, L, purity: sm.purity?.value ?? 0 });
+    }
+    if (sort === 'freq') out.sort((a, b) => b.on - a.on);
+    if (sort === 'purity') out.sort((a, b) => b.purity - a.purity);
+    return out;
+  }, [store, key, sae, ds, classes, sort]);
+  if (!store) return <div className="flex h-full items-center justify-center p-6 text-sm text-dim">Run a dataset first; the gallery shows what every unit fires on.</div>;
+  const thumbFor = (card) => {
+    const top = topItems(card.acts, 8).filter((i) => card.acts[i] > 0);
+    if (!top.length) return <div className="h-14 w-14 rounded bg-line" />;
+    if (kind.kind === 'image') {
+      const out = new Float32Array(kind.C * kind.H * kind.W);
+      let w = 0;
+      for (const i of top) {
+        const px = displayOf(ds, store.dsIndex[i], kind), a = card.acts[i];
+        for (let j = 0; j < out.length; j++) out[j] += a * px[j];
+        w += a;
+      }
+      let mx = 0;
+      for (let j = 0; j < out.length; j++) { out[j] /= w || 1; mx = Math.max(mx, out[j]); }
+      for (let j = 0; j < out.length; j++) out[j] /= mx || 1;
+      return <Thumb pixels={out} kind={kind} size={56} />;
+    }
+    if (kind.kind === 'tokens') {
+      const i = top[0], a = card.args(i);
+      const pos = card.L.kind === 'seq' ? a : card.L.kind === 'spatial' ? Math.floor(a / card.L.W) : null;
+      return <TokenThumb ids={ds.item(store.dsIndex[i])} kind={kind} pos={pos} />;
+    }
+    return <div className="text-[10px] text-dim">top label {store.labels ? classes?.[store.labels[top[0]]] ?? store.labels[top[0]] : 'n/a'}</div>;
+  };
+  return (
+    <div className="h-full overflow-y-auto scroll-thin p-3 pt-24">
+      <div className="mb-3 flex flex-wrap items-center gap-2 text-xs">
+        <select value={key} onChange={(e) => { setKey(e.target.value); setLimit(96); }} className={selectCls}>
+          {options.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
+        </select>
+        <span className="text-dim">sort</span>
+        {[['index', 'by number'], ['freq', 'most active'], ['purity', 'most single-label']].map(([k, t]) => <Btn key={k} on={sort === k} onClick={() => setSort(k)}>{t}</Btn>)}
+        <span className="text-[10px] text-dim">{cards.length} units. Pictures are the activation-weighted average of each unit's top 8 items.<Cite id="schubert2020" /></span>
+      </div>
+      <div className="grid gap-2" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))' }}>
+        {cards.slice(0, limit).map((card) => {
+          const ex = explFor(card.room, card.c, card.isSae);
+          const on = selected && selected.room === card.room && !!selected.sae === card.isSae && (card.isSae ? selected.index === card.c : unitOf(card.L, selected.index).c === card.c);
+          return (
+            <button key={card.c} onClick={() => onPick({ room: card.room, index: card.isSae ? card.c : card.L.idx(card.c, 0), sae: card.isSae })}
+              className={`space-y-1 rounded-md border p-2 text-left ${on ? 'border-warm/70 bg-warm/5' : 'border-line hover:border-glow/40'}`}>
+              <div className="flex items-start gap-2">
+                {thumbFor(card)}
+                <div className="min-w-0 text-[10px] leading-tight">
+                  <div className="text-xs text-slate-100">{card.isSae ? 'feature' : 'channel'} {card.c}</div>
+                  {ex && <div className="mt-0.5 italic text-slate-200">"{ex.explanation}"</div>}
+                </div>
+              </div>
+              <div className="text-[10px] leading-tight text-dim">{card.sm.text}</div>
+            </button>
+          );
+        })}
+      </div>
+      {cards.length > limit && <div className="mt-3 text-center"><Btn onClick={() => setLimit((l) => l + 96)}>show more ({cards.length - limit} left)</Btn></div>}
     </div>
   );
 }
