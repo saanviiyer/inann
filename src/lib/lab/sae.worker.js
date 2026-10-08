@@ -4,6 +4,13 @@ import { makeSae, encode, decode } from './saeCore.js';
 import { featureStats } from './saeLab.js';
 
 self.onmessage = (e) => {
+  // stats-only mode: score an existing SAE on every item (used when an SAE or a session is loaded)
+  if (e.data.mode === 'stats') {
+    const { sae, items } = e.data;
+    const stats = featureStats(sae, { items: items.items, N: items.N, P: items.P, C: sae.D }, (frac) => self.postMessage({ type: 'stats', frac }));
+    self.postMessage({ type: 'done', sae, stats, metrics: null });
+    return;
+  }
   const { X, D, F, k, steps, lr, batch, seed } = e.data;
   const N = X.length / D;
   // hold out 10% for the reported metrics

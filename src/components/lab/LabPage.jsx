@@ -77,7 +77,9 @@ export default function LabPage() {
   const [focusRoom, setFocusRoom] = useState(null);
   const [expl, setExpl] = useState(null); // explanations from scripts/explain_lab.py
   const [pinned, setPinned] = useState(null);
-  const [outKind, setOutKind] = useState('classes'); // how to read the first output: class scores or raw values // {outs, pixels, label} of a pinned input, for difference mode
+  const [outKind, setOutKind] = useState('classes'); // how to read the first output: class scores or raw values
+  const [modelSrc, setModelSrc] = useState(null); // {example} or {url, metaUrl, dataUrl}, saved in sessions
+  const [pendingSession, setPendingSession] = useState(null); // {outs, pixels, label} of a pinned input, for difference mode
   const explFor = useCallback((room, unit, isFeat) => {
     if (!expl || expl.tensor !== room || expl.sae !== !!isFeat) return null;
     return expl.byUnit.get(unit) ?? null;
@@ -120,6 +122,7 @@ export default function LabPage() {
     ]);
     const dsJson = m.dataset ? await fetch(`${BASE}examples/${m.dataset}`).then((r) => r.json()) : null;
     await loadModel(bytes, m, `${file}.onnx`, dsJson ? datasetFromJson(dsJson, m.dataset.replace('.json', '')) : null);
+    setModelSrc({ example: file });
   }, [loadModel]);
 
   const loadUrl = useCallback(async (url, metaUrl, dataUrl) => {
@@ -132,6 +135,7 @@ export default function LabPage() {
       const dsUrl = dataUrl ?? (m.dataset ? new URL(m.dataset, new URL(metaUrl ?? url, location.href)).href : null);
       const dsJson = dsUrl ? await fetch(dsUrl).then((r) => r.json()) : null;
       await loadModel(bytes, m, url.split('/').pop().split('?')[0], dsJson ? datasetFromJson(dsJson, dsUrl.split('/').pop()) : null);
+      setModelSrc({ url, metaUrl, dataUrl });
     } catch (e) { setError(`Could not fetch ${url}: ${e.message ?? e}. The server must allow cross-origin requests.`); setStatus(''); }
   }, [loadModel]);
 
@@ -153,7 +157,8 @@ export default function LabPage() {
       setExpl({ ...m, byUnit: new Map(m.units.map((u) => [u.unit, u])) });
       return;
     }
-    if (onnx) await loadModel(await onnx.arrayBuffer(), m, onnx.name, null);
+    if (!onnx && m.kind === 'inann-lab-session') { openSession(m); return; }
+    if (onnx) { await loadModel(await onnx.arrayBuffer(), m, onnx.name, null); setModelSrc({ file: onnx.name }); }
     else if (metaFile && !onnx) setError('Drop the .onnx file too (the .json only describes it).');
   };
 
@@ -310,6 +315,58 @@ export default function LabPage() {
   useEffect(() => { if (selected) rightPanel.current?.scrollTo({ top: 0, behavior: 'smooth' }); }, [selected]);
   const onHover = useCallback((h) => setHover(h), []);
 
+  // ---------- sessions: save what you set up, reopen it later ----------
+  const saveSession = () => {
+    const sess = {
+      kind: 'inann-lab-session', version: 1, savedAt: new Date().toISOString(),
+      model: { fileName: model.fileName, params: model.summary.params, src: modelSrc }, meta,
+      settings: { norm, prep, outKind, maxItems, roomNames },
+      sae: sae ? { room: sae.room, metrics: sae.metrics, json: toJSON(sae.sae) } : null,
+      explanations: expl ? { ...expl, byUnit: undefined } : null,
+    };
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([JSON.stringify(sess)], { type: 'application/json' }));
+    a.download = `inann_session_${model.fileName.replace(/\.onnx$/, '')}.json`;
+    a.click();
+  };
+  const openSession = async (sess) => {
+    const src = sess.model?.src;
+    if (src?.example) await loadExample(src.example);
+    else if (src?.url) await loadUrl(src.url, src.metaUrl, src.dataUrl);
+    else if (!model || model.fileName !== sess.model.fileName) {
+      setError(`This session is for ${sess.model.fileName}. Drop that model first, then the session again.`);
+      return;
+    }
+    setPendingSession(sess);
+  };
+  useEffect(() => {
+    // apply settings once the model is in; the SAE waits for the dataset pass
+    if (!pendingSession || !model || model.fileName !== pendingSession.model.fileName) return;
+    const st = pendingSession.settings;
+    if (!pendingSession.appliedSettings) {
+      setNorm(st.norm); setPrep(st.prep); setOutKind(st.outKind); setMaxItems(st.maxItems);
+      setRoomNames(st.roomNames.filter((n) => model.shapes[n]));
+      if (pendingSession.explanations) setExpl({ ...pendingSession.explanations, byUnit: new Map(pendingSession.explanations.units.map((u) => [u.unit, u])) });
+      setStore(null);
+      setPendingSession({ ...pendingSession, appliedSettings: true });
+      return;
+    }
+    if (pendingSession.sae && store && store.stats[pendingSession.sae.room]?.full) {
+      const s = fromJSON(pendingSession.sae.json);
+      const iv = itemVectors(store, pendingSession.sae.room);
+      const w = new Worker(new URL('../../lib/lab/sae.worker.js', import.meta.url), { type: 'module' });
+      w.onmessage = (e) => {
+        if (e.data.type !== 'done') return;
+        const a = Array.from(e.data.stats.featMax).filter((v) => v > 0).sort((x, y) => x - y);
+        const alive = new Set(Array.from(e.data.stats.featMax.keys()).filter((i) => e.data.stats.featMax[i] > 0).map((i) => i % s.F)).size;
+        setSae({ room: pendingSession.sae.room, sae: s, metrics: pendingSession.sae.metrics, stats: e.data.stats, N: store.N, featScale: a[Math.floor(a.length * 0.99)] || 1, alive });
+        w.terminate();
+      };
+      w.postMessage({ mode: 'stats', sae: s, items: { items: iv.items, N: iv.N, P: iv.P } });
+      setPendingSession(null);
+    } else if (!pendingSession.sae && store) setPendingSession(null);
+  }, [pendingSession, model, store]); // eslint-disable-line
+
   // drop a model anywhere on the page
   const [dragAll, setDragAll] = useState(false);
   useEffect(() => {
@@ -320,7 +377,7 @@ export default function LabPage() {
       setDragAll(false);
       if (!files.length) return;
       e.preventDefault();
-      if (files.some((f) => f.name.endsWith('.onnx')) || (files.length === 1 && /explanations/i.test(files[0].name))) onFiles(files);
+      if (files.some((f) => f.name.endsWith('.onnx')) || (files.length === 1 && /explanations|session/i.test(files[0].name))) onFiles(files);
       else onDatasetFiles(files, false);
     };
     window.addEventListener('dragover', over);
@@ -352,7 +409,7 @@ export default function LabPage() {
             </ol>
           </details>
         </div>
-        <ModelCard model={model} meta={meta} onFiles={onFiles} onExample={loadExample} onUrl={loadUrl} status={status} error={error} clearError={() => setError('')} />
+        <ModelCard model={model} meta={meta} onFiles={onFiles} onExample={loadExample} onUrl={loadUrl} status={status} error={error} clearError={() => setError('')} onSave={saveSession} pending={!!pendingSession} />
         {model && kind && (
           <InputCard
             model={model} kind={kind} norm={norm} setNorm={setNorm} prep={prep} setPrep={setPrep} pixels={shownPixels} setPixels={setCustom}
@@ -458,7 +515,7 @@ function HoverText({ hover, model, outs, saeNow }) {
 }
 
 // ---------- model ----------
-function ModelCard({ model, meta, onFiles, onExample, onUrl, status, error, clearError }) {
+function ModelCard({ model, meta, onFiles, onExample, onUrl, status, error, clearError, onSave, pending }) {
   const [drag, setDrag] = useState(false);
   const [url, setUrl] = useState('');
   const s = model?.summary;
@@ -500,6 +557,15 @@ function ModelCard({ model, meta, onFiles, onExample, onUrl, status, error, clea
           <div className="text-[10px] text-dim">
             {Object.entries(s.opCounts).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k}×${v}`).join('  ')}
           </div>
+        </div>
+      )}
+      {model && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <Btn onClick={onSave}>Save session</Btn>
+          <label className="cursor-pointer rounded-md border border-line px-2.5 py-1 text-xs text-slate-200 hover:border-glow/40">
+            Open session<input type="file" accept=".json" className="hidden" onChange={(e) => e.target.files[0] && onFiles(e.target.files)} />
+          </label>
+          {pending && <span className="text-[10px] text-glow">restoring session...</span>}
         </div>
       )}
       <p className="text-[10px] leading-snug text-dim">

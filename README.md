@@ -102,6 +102,9 @@ What you get for any model:
 - **"What does it control?"** clamps a channel or feature on 100 items, spread evenly over the dataset, and counts how the answer moves, with selectivity. In the MNIST CNN, a channel whose top items are mostly 7s turns other digits into 5s when clamped high, with low selectivity. That is why responses and causes are both shown.
 - **Measured summaries and search.** Every channel and feature gets a one-line summary built only from counts (for example "11 of top 12 are 5 · fires on 40% of items · usually upper left"). The Lab search box matches classes, positions and "rare" or "common" against these summaries; it does not use language-model explanations.
 - **Transformers.** Integer token inputs are tokenized through a `vocab` in the meta file. Attention maps render as one tile per head, and selecting a cell draws arcs from every key token to the query token over the input row.
+- **Pin and compare.** Freeze one input; every room then shows this input minus the pinned one, so you can see where a 3 and an 8 part ways inside the network.
+- **Occlusion maps** for the answer or any channel (Zeiler and Fergus 2014): forward-only "where does it look".
+- **Sessions.** Save the rooms, settings, SAE and explanations to a JSON file and open them later. Example and URL models reload themselves.
 - Drop a model anywhere on the page, pick units by number, and use the fly-to list to move through deep models. ResNet-18 (49 ops) and MobileNetV2 (170 ops) load and run.
 
 Inputs: draw (with MNIST-style centring), upload a picture, type tokens through the model's vocabulary, or use dataset items. Datasets can be:

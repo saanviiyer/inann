@@ -115,6 +115,11 @@ export const REFS = {
     full: 'M. Wattenberg, F. Viegas, I. Johnson. How to Use t-SNE Effectively. Distill, 2016.',
     url: 'https://distill.pub/2016/misread-tsne/',
   },
+  schubert2020: {
+    short: 'Schubert et al. 2020',
+    full: 'L. Schubert, M. Petrov, S. Carter, N. Cammarata, G. Goh, C. Olah. OpenAI Microscope. 2020. A gallery of every unit of several vision models.',
+    url: 'https://openai.com/index/microscope/',
+  },
   alain2016: {
     short: 'Alain & Bengio 2016',
     full: 'G. Alain, Y. Bengio. Understanding intermediate layers using linear classifier probes. arXiv:1610.01644, 2016.',
