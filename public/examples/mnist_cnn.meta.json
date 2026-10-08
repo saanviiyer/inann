@@ -1,0 +1,26 @@
+{
+ "name": "MNIST CNN",
+ "description": "Trained here on MNIST for 2 epochs (seed 0), 97.4% test accuracy.",
+ "input": {
+  "kind": "image",
+  "range": [
+   0,
+   1
+  ],
+  "preprocess": "mnist"
+ },
+ "classes": [
+  "0",
+  "1",
+  "2",
+  "3",
+  "4",
+  "5",
+  "6",
+  "7",
+  "8",
+  "9"
+ ],
+ "dataset": "mnist_test_1000.json",
+ "test_acc": 0.9737
+}

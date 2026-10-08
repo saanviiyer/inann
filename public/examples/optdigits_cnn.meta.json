@@ -1,0 +1,26 @@
+{
+ "name": "Tour 8x8 CNN",
+ "description": "The network from the Tour, 95.8% on its 450 held-out digits.",
+ "input": {
+  "kind": "image",
+  "range": [
+   0,
+   1
+  ],
+  "preprocess": "optdigits"
+ },
+ "classes": [
+  "0",
+  "1",
+  "2",
+  "3",
+  "4",
+  "5",
+  "6",
+  "7",
+  "8",
+  "9"
+ ],
+ "dataset": "optdigits_450.json",
+ "test_acc": 0.9578
+}

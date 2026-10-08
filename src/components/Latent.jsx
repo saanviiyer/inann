@@ -1,127 +1,16 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Canvas, useFrame } from '@react-three/fiber';
-import { OrbitControls, Html } from '@react-three/drei';
-import * as THREE from 'three';
+import LatentCloud from './LatentCloud.jsx';
 import { PixelGrid, Term, Cite, NotShown, Btn } from './ui.jsx';
 import { LATENT_LAYERS, pca, neighbours, knnAccuracy, separation } from '../lib/latent.js';
 import { net, sae, DIGITS, LABELS } from '../lib/model.js';
+
+const CLASSES = Array.from({ length: 10 }, (_, d) => String(d));
 import { forward } from '../lib/net.js';
-
-const R = 5; // world radius of the cloud
-const NEUTRAL = new THREE.Color('#c3c2b7');
-const DIM = new THREE.Color('#4a4f5c');
-const HIGHLIGHT = new THREE.Color('#3987e5');
-
-// one sprite texture per numeral, so each point is labelled by its own digit (identity is never color alone)
-const numeralTex = Array.from({ length: 10 }, (_, d) => {
-  const c = document.createElement('canvas');
-  c.width = c.height = 64;
-  const ctx = c.getContext('2d');
-  ctx.fillStyle = '#fff';
-  ctx.font = 'bold 52px Inter, Helvetica, Arial, sans-serif';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(String(d), 32, 36);
-  const t = new THREE.CanvasTexture(c);
-  t.colorSpace = THREE.SRGBColorSpace;
-  return t;
-});
-
-const byDigit = Array.from({ length: 10 }, (_, d) => LABELS.map((y, i) => (y === d ? i : -1)).filter((i) => i >= 0));
-
-function DigitCloud({ d, target, highlight, onPick }) {
-  const idx = byDigit[d];
-  const geo = useMemo(() => {
-    const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(idx.length * 3), 3));
-    return g;
-  }, [idx]);
-  const mat = useRef();
-  useFrame(() => {
-    // glide toward the new layer's positions
-    const a = geo.attributes.position.array;
-    let moving = false;
-    idx.forEach((i, k) => {
-      for (let c = 0; c < 3; c++) {
-        const t = target[i][c], v = a[k * 3 + c];
-        const nv = v + (t - v) * 0.08;
-        if (Math.abs(t - nv) > 1e-3) moving = true;
-        a[k * 3 + c] = nv;
-      }
-    });
-    if (moving) geo.attributes.position.needsUpdate = true;
-    const want = highlight == null ? NEUTRAL : highlight === d ? HIGHLIGHT : DIM;
-    mat.current.color.lerp(want, 0.15);
-  });
-  return (
-    <points geometry={geo} onClick={(e) => { e.stopPropagation(); onPick(idx[e.index]); }}>
-      <pointsMaterial ref={mat} map={numeralTex[d]} size={0.42} sizeAttenuation transparent alphaTest={0.3} depthWrite={false} />
-    </points>
-  );
-}
-
-function You({ p, trail }) {
-  const ref = useRef();
-  const line = useMemo(() => new THREE.BufferGeometry(), []);
-  useEffect(() => {
-    line.setFromPoints(trail.map((q) => new THREE.Vector3(...q)));
-  }, [trail, line]);
-  useFrame(({ clock }) => {
-    ref.current.position.lerp(new THREE.Vector3(...p), 0.2);
-    ref.current.scale.setScalar(1 + 0.15 * Math.sin(clock.elapsedTime * 4));
-  });
-  return (
-    <group>
-      <mesh ref={ref}>
-        <sphereGeometry args={[0.18, 20, 14]} />
-        <meshBasicMaterial color="#ffb547" toneMapped={false} />
-        <Html center position={[0, 0.42, 0]} style={{ pointerEvents: 'none' }}>
-          <div className="whitespace-nowrap rounded bg-black/60 px-1 text-[10px] text-warm">your input</div>
-        </Html>
-      </mesh>
-      {trail.length > 1 && (
-        <line geometry={line}>
-          <lineBasicMaterial color="#ffd27a" transparent opacity={0.8} toneMapped={false} />
-        </line>
-      )}
-    </group>
-  );
-}
-
-function Axes() {
-  const geo = useMemo(() => {
-    const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.BufferAttribute(new Float32Array([-R, 0, 0, R, 0, 0, 0, -R, 0, 0, R, 0, 0, 0, -R, 0, 0, R]), 3));
-    return g;
-  }, []);
-  return (
-    <group>
-      <lineSegments geometry={geo}>
-        <lineBasicMaterial color="#1c2436" />
-      </lineSegments>
-      {[['PC1', [R + 0.4, 0, 0]], ['PC2', [0, R + 0.4, 0]], ['PC3', [0, 0, R + 0.4]]].map(([t, p]) => (
-        <Html key={t} position={p} center style={{ pointerEvents: 'none' }}>
-          <div className="text-[10px] text-dim">{t}</div>
-        </Html>
-      ))}
-    </group>
-  );
-}
 
 export function LatentScene({ layer, f, highlight, trail, onPick }) {
   const P = useMemo(() => pca(layer), [layer]);
-  const target = useMemo(() => P.pts.map((q) => q.map((v) => (v / P.scale) * R)), [P]);
-  const me = useMemo(() => P.project(f.acts[layer]).map((v) => (v / P.scale) * R), [P, f, layer]);
-  const trailW = useMemo(() => trail.map((acts) => P.project(acts[layer]).map((v) => (v / P.scale) * R)), [trail, P, layer]);
-  return (
-    <Canvas camera={{ position: [8, 6, 10], fov: 45 }} dpr={[1, 2]}>
-      <color attach="background" args={['#05070d']} />
-      <Axes />
-      {Array.from({ length: 10 }, (_, d) => <DigitCloud key={d} d={d} target={target} highlight={highlight} onPick={onPick} />)}
-      <You p={me} trail={trailW} />
-      <OrbitControls makeDefault enableDamping dampingFactor={0.1} />
-    </Canvas>
-  );
+  const trailVecs = useMemo(() => trail.map((acts) => acts[layer]), [trail, layer]);
+  return <LatentCloud P={P} labels={LABELS} classes={CLASSES} me={f.acts[layer]} trail={trailVecs} highlight={highlight} onPick={onPick} />;
 }
 
 export function LatentPanel({ layer, setLayer, f, highlight, setHighlight, setX, setTrail }) {

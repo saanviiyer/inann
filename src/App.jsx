@@ -8,6 +8,7 @@ import SearchBar from './components/SearchBar.jsx';
 import SteerPanel from './components/SteerPanel.jsx';
 import SaePanel from './components/SaePanel.jsx';
 import { LatentScene, LatentPanel } from './components/Latent.jsx';
+import LabPage from './components/lab/LabPage.jsx';
 import { FeatureVis, Patches, Neighborhood } from './components/SeePanel.jsx';
 import { Adversarial, Occlusion, occlude } from './components/BreakPanel.jsx';
 import { Term, Cite, NotShown, Btn, Kbd, Sources, Boundary } from './components/ui.jsx';
@@ -81,6 +82,8 @@ const firstSeven = DIGITS[LABELS.indexOf(7)];
 
 export default function App() {
   const [chapter, setChapter] = useState(1);
+  const [area, setArea] = useState(() => (typeof location !== 'undefined' && location.hash === '#lab' ? 'lab' : 'tour'));
+  useEffect(() => { try { history.replaceState(null, '', area === 'lab' ? '#lab' : '#'); } catch { /* ignore */ } }, [area]);
   const [x, setXRaw] = useState(() => Float32Array.from(firstSeven));
   const [drawKey, setDrawKey] = useState(0);
   const [occ, setOcc] = useState({ on: false, size: 2, pos: 0 });
@@ -174,7 +177,12 @@ export default function App() {
     <div className="flex h-full flex-col">
       <header className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-line px-4 py-2">
         <div className="text-sm font-semibold tracking-[0.3em] text-glow">INANN</div>
-        <nav className="flex flex-wrap gap-1">
+        <div className="flex overflow-hidden rounded-md border border-line text-xs">
+          {[['tour', 'Tour'], ['lab', 'Lab: your model']].map(([k, t]) => (
+            <button key={k} onClick={() => setArea(k)} className={`px-2.5 py-1 ${area === k ? 'bg-glow/15 text-glow' : 'text-dim hover:text-slate-200'}`}>{t}</button>
+          ))}
+        </div>
+        {area === 'tour' && <nav className="flex flex-wrap gap-1">
           {CHAPTERS.map((c) => (
             <button
               key={c.n}
@@ -184,13 +192,13 @@ export default function App() {
               {c.n}. {c.name}
             </button>
           ))}
-        </nav>
+        </nav>}
         <div className="ml-auto flex items-center gap-3 text-[11px] text-dim">
           <span><Kbd>space</Kbd> {pausedUI ? 'resume' : 'pause'}</span>
           {chapter > 1 && chapter < 8 && <span><Kbd>F</Kbd> follow the signal</span>}
           <button onClick={() => setSources(true)} className="text-glow/80 hover:text-glow">Sources</button>
         </div>
-        {chapter > 1 && (
+        {area === 'tour' && chapter > 1 && (
           <div className="flex w-full flex-wrap items-center gap-2">
             <SearchBar onPick={onSearchPick} />
             <div className="flex overflow-hidden rounded-md border border-line text-xs" title="show raw dense neurons, or the sparse autoencoder's features in their place">
@@ -210,13 +218,14 @@ export default function App() {
         )}
       </header>
 
-      {chapter === 1 && (
+      {area === 'lab' && <LabPage />}
+      {area === 'tour' && chapter === 1 && (
         <main className="flex-1 overflow-y-auto">
           <Prologue paused={paused} onNext={() => setChapter(2)} />
         </main>
       )}
 
-      <main className={`${chapter === 1 ? 'hidden' : 'flex'} min-h-0 flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-hidden`}>
+      <main className={`${chapter === 1 || area === 'lab' ? 'hidden' : 'flex'} min-h-0 flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-hidden`}>
         {/* left: intro, input, controls, takeaway */}
         <aside className="scroll-thin order-2 w-full shrink-0 space-y-4 border-line p-4 lg:overflow-y-auto lg:order-1 lg:w-80 lg:shrink-0 lg:border-r">
           <div>
@@ -284,7 +293,7 @@ export default function App() {
           )}
           <div className={`absolute inset-0 ${chapter === 8 ? 'invisible' : ''}`}>
           {entered && <Scene
-            active={chapter > 1 && chapter < 8}
+            active={area === 'tour' && chapter > 1 && chapter < 8}
             mode={mode}
             flyTo={flyTo}
             ring={ring}

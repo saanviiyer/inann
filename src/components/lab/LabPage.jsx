@@ -1,0 +1,862 @@
+// The Lab: load any ONNX model and walk through it. Rooms for its layers, a room per unit with
+// its dataset statistics, live clamping, a sparse autoencoder trained in the browser and docked
+// beside any layer, and the latent space of every layer.
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import LabScene from './LabScene.jsx';
+import LatentCloud from '../LatentCloud.jsx';
+import { Thumb, VectorStrip, Hist, Curve, Field, selectCls } from './LabParts.jsx';
+import { Btn, Term, Cite, NotShown, Boundary } from '../ui.jsx';
+import { LabModel, layoutOf, softmax } from '../../lib/lab/runtime.js';
+import {
+  inputKind, NORMS, normFromMeta, toModel, drawingToPixels, imageFileToPixels, datasetFromJson, datasetFromImages,
+  parseNpy, datasetFromNpy, modelInputOf, displayOf,
+} from '../../lib/lab/data.js';
+import { collect, channelActs, topItems, histogramOf, labelPurity } from '../../lib/lab/store.js';
+import { itemVectors, sampleRows, featuresNow, saeTransform, neuronTransform } from '../../lib/lab/saeLab.js';
+import { toJSON, fromJSON } from '../../lib/lab/saeCore.js';
+import { pcaOf, knnAccOf, separationOf } from '../../lib/latent.js';
+
+const BASE = import.meta.env.BASE_URL;
+export const EXAMPLES = [
+  { file: 'mnist_cnn', label: 'MNIST CNN' },
+  { file: 'mnist_mlp', label: 'MNIST MLP' },
+  { file: 'optdigits_cnn', label: 'Tour 8x8 CNN' },
+];
+
+const unitOf = (L, i) => (L.kind === 'spatial' ? { c: Math.floor(i / L.P), p: i % L.P } : L.kind === 'seq' ? { c: i % L.C, p: Math.floor(i / L.C) } : { c: i, p: 0 });
+const posText = (L, p) => (L.kind === 'spatial' ? `row ${Math.floor(p / L.W)}, col ${p % L.W}` : L.kind === 'seq' ? `token ${p}` : '');
+const median = (a) => { const s = [...a].sort((x, y) => x - y); return s.length ? s[Math.floor(s.length / 2)] : NaN; };
+
+// where in the input a spatial unit at position p sits (approximate: scales the grid onto the image)
+function boxFor(L, p, kind) {
+  if (L.kind !== 'spatial' || kind?.kind !== 'image') return null;
+  const y = Math.floor(p / L.W), x = p % L.W, sy = kind.H / L.H, sx = kind.W / L.W;
+  return { x: x * sx, y: y * sy, w: Math.max(1, sx), h: Math.max(1, sy) };
+}
+
+function labelRooms(rooms) {
+  const seen = {};
+  return rooms.map((r) => {
+    seen[r.op] = (seen[r.op] ?? 0) + 1;
+    return { ...r, label: r.isInputRoom ? 'Input' : r.isOutput ? 'Output' : `${r.op} ${seen[r.op]}` };
+  });
+}
+
+export default function LabPage() {
+  const [status, setStatus] = useState('');
+  const [error, setError] = useState('');
+  const [model, setModel] = useState(null);
+  const [meta, setMeta] = useState({});
+  const [kind, setKind] = useState(null);
+  const [norm, setNorm] = useState('unit');
+  const [prep, setPrep] = useState('mnist');
+  const [pixels, setPixels] = useState(null); // display form of the current input
+  const [ds, setDs] = useState(null);
+  const [item, setItemRaw] = useState(0);
+  const [source, setSource] = useState('item'); // 'item' (a dataset item) or 'custom' (drawn, uploaded, random)
+  const setItem = useCallback((v) => { setSource('item'); setItemRaw(v); }, []);
+  const setCustom = useCallback((p) => { setSource('custom'); setPixels(p); }, []);
+  const [store, setStore] = useState(null);
+  const [progress, setProgress] = useState(null);
+  const [roomNames, setRoomNames] = useState([]);
+  const [outs, setOuts] = useState(null);
+  const [baseOuts, setBaseOuts] = useState(null);
+  const [selected, setSelected] = useState(null);
+  const [hover, setHover] = useState(null);
+  const [steer, setSteer] = useState(null);
+  const [sae, setSae] = useState(null); // {room, sae, metrics, stats, iv}
+  const [view, setView] = useState('space');
+  const [frameNonce, setFrameNonce] = useState(0);
+  const runId = useRef(0);
+
+  // ---------- loading ----------
+  const loadModel = useCallback(async (bytes, m = {}, fileName = 'model.onnx', dataset = null) => {
+    setError(''); setStatus(`Loading ${fileName}...`);
+    setStore(null); setSae(null); setSteer(null); setSelected(null); setOuts(null);
+    try {
+      const lm = await LabModel.load(bytes, m, fileName);
+      const k = inputKind(lm.inputDims, m);
+      setModel(lm); setMeta(m); setKind(k);
+      setNorm(normFromMeta(m));
+      setPrep(m.input?.preprocess ?? (k.kind === 'image' && k.H === 28 ? 'mnist' : 'fit'));
+      setRoomNames(lm.rooms.map((r) => r.name));
+      setPixels(new Float32Array(k.kind === 'image' ? k.C * k.H * k.W : lm.inputSize));
+      setDs(dataset);
+      setSource(dataset ? 'item' : 'custom');
+      setItemRaw(0);
+      setFrameNonce((n) => n + 1);
+      setStatus('');
+    } catch (e) {
+      setError(`Could not load this model: ${e.message ?? e}`);
+      setStatus('');
+    }
+  }, []);
+
+  const loadExample = useCallback(async (file) => {
+    setStatus(`Fetching ${file}...`);
+    const [bytes, m] = await Promise.all([
+      fetch(`${BASE}examples/${file}.onnx`).then((r) => r.arrayBuffer()),
+      fetch(`${BASE}examples/${file}.meta.json`).then((r) => r.json()),
+    ]);
+    const dsJson = m.dataset ? await fetch(`${BASE}examples/${m.dataset}`).then((r) => r.json()) : null;
+    await loadModel(bytes, m, `${file}.onnx`, dsJson ? datasetFromJson(dsJson, m.dataset.replace('.json', '')) : null);
+  }, [loadModel]);
+
+  useEffect(() => { loadExample('mnist_cnn'); }, [loadExample]);
+
+  const onFiles = async (files) => {
+    const list = [...files];
+    const onnx = list.find((f) => f.name.endsWith('.onnx'));
+    const metaFile = list.find((f) => f.name.endsWith('.json'));
+    let m = {};
+    if (metaFile) {
+      try { m = JSON.parse(await metaFile.text()); } catch { setError('The .json next to the model is not valid JSON; ignoring it.'); }
+    }
+    if (onnx) await loadModel(await onnx.arrayBuffer(), m, onnx.name, null);
+    else if (metaFile && !onnx) setError('Drop the .onnx file too (the .json only describes it).');
+  };
+
+  // ---------- the current input ----------
+  const useItem = source === 'item' && ds && model && kind;
+  const itemIdx = ds ? Math.min(item, ds.n - 1) : 0;
+  const shownPixels = useMemo(() => (useItem ? displayOf(ds, itemIdx, kind) : pixels), [useItem, ds, itemIdx, kind, pixels]);
+  const xFinal = useMemo(() => {
+    if (!model || !kind) return null;
+    if (useItem) return modelInputOf(ds, itemIdx, kind, norm);
+    if (!pixels) return null;
+    return kind.kind === 'image' ? toModel(pixels, kind, norm) : Float32Array.from(pixels);
+  }, [model, kind, useItem, ds, itemIdx, norm, pixels]);
+
+  // run it (and the steered version when a clamp is set)
+  useEffect(() => {
+    if (!model || !xFinal) return;
+    const id = ++runId.current;
+    (async () => {
+      try {
+        const base = await model.run([xFinal]);
+        let out = base;
+        if (steer) {
+          const r = model.describe(steer.room);
+          const tf = steer.sae && sae ? saeTransform(sae.sae, r.layout, 'steer', steer.feature, steer.value) : neuronTransform(r.layout, steer.c, steer.p, steer.value);
+          out = await model.runWith(xFinal, steer.room, tf);
+        }
+        if (id === runId.current) { setBaseOuts(base); setOuts(out); }
+      } catch (e) { setError(`Inference failed: ${e.message ?? e}`); }
+    })();
+  }, [model, xFinal, steer, sae]);
+
+  // ---------- dataset analysis ----------
+  const rooms = useMemo(() => (model ? roomNames.map((n) => model.describe(n)).filter((r) => r.dims) : []), [model, roomNames]);
+  const analyze = useCallback(async () => {
+    if (!model || !ds) return;
+    setProgress(0);
+    try {
+      const st = await collect(model, ds, kind, norm, rooms, { max: 2000, onProgress: setProgress });
+      setStore(st);
+    } catch (e) { setError(`Dataset pass failed: ${e.message ?? e}`); }
+    setProgress(null);
+  }, [model, ds, kind, norm, rooms]);
+  useEffect(() => { if (model && ds && !store && progress == null) analyze(); }, [model, ds, store]); // eslint-disable-line
+
+  const onDatasetFiles = async (files, invert) => {
+    const list = [...files];
+    try {
+      if (list.some((f) => f.name.endsWith('.npy'))) {
+        const xs = list.find((f) => /x|data|input/i.test(f.name) && f.name.endsWith('.npy')) ?? list.find((f) => f.name.endsWith('.npy'));
+        const ys = list.find((f) => f !== xs && f.name.endsWith('.npy'));
+        const X = parseNpy(await xs.arrayBuffer());
+        const Y = ys ? parseNpy(await ys.arrayBuffer()) : null;
+        if (X.data.length / X.shape[0] !== model.inputSize) throw new Error(`each item has ${X.data.length / X.shape[0]} values but the model takes ${model.inputSize}`);
+        setDs(datasetFromNpy(X, Y, kind, norm !== 'unit'));
+      } else if (list.length === 1 && list[0].name.endsWith('.json')) {
+        setDs(datasetFromJson(JSON.parse(await list[0].text()), list[0].name));
+      } else {
+        setStatus('Reading images...');
+        setDs(await datasetFromImages(list, kind, invert));
+        setStatus('');
+      }
+      setStore(null); setSae(null); setItemRaw(0); setSource('item');
+    } catch (e) { setError(`Could not read that dataset: ${e.message ?? e}`); }
+  };
+
+  // ---------- 3D values ----------
+  const inputRoom = useMemo(() => {
+    if (!model || !kind) return null;
+    const dims = kind.kind === 'image' ? [kind.C, kind.H, kind.W] : model.inputDims;
+    return { name: '__input', op: 'Input', dims, layout: layoutOf(dims), isInputRoom: true };
+  }, [model, kind]);
+  const sceneRooms = useMemo(() => (inputRoom ? labelRooms([inputRoom, ...rooms]) : []), [inputRoom, rooms]);
+  const values = useMemo(() => {
+    const v = {};
+    if (!outs) return v;
+    for (const r of rooms) if (outs[r.name]) v[r.name] = r.isOutput && r.layout.size <= 32 ? Float32Array.from(maybeSoftmax(outs[r.name].data)) : outs[r.name].data;
+    if (inputRoom && kind?.kind !== 'image' && xFinal) v.__input = xFinal;
+    return v;
+  }, [outs, rooms, inputRoom, kind, xFinal]);
+  const scales = useMemo(() => {
+    const s = {};
+    for (const r of rooms) {
+      const st = store?.stats[r.name];
+      if (r.isOutput && r.layout.size <= 32) { s[r.name] = 1; continue; }
+      if (st) { s[r.name] = st.scale; s[`${r.name}:signed`] = st.signed; }
+      else if (values[r.name]) { let m = 0; for (const v of values[r.name]) m = Math.max(m, Math.abs(v)); s[r.name] = m || 1; s[`${r.name}:signed`] = values[r.name].some((v) => v < 0); }
+    }
+    if (values.__input) { let m = 0; for (const v of values.__input) m = Math.max(m, Math.abs(v)); s.__input = m || 1; s['__input:signed'] = values.__input.some((v) => v < 0); }
+    return s;
+  }, [rooms, store, values]);
+
+  const out = outs && model ? outs[model.outputName]?.data : null;
+  const probs = out && out.length <= 1000 ? maybeSoftmax(out) : null;
+  const pred = probs ? probs.indexOf(Math.max(...probs)) : null;
+  const classes = meta.classes ?? ds?.classes ?? null;
+
+  const saeNow = useMemo(() => {
+    if (!sae || !outs?.[sae.room]) return null;
+    const L = model.describe(sae.room).layout;
+    const f = featuresNow(sae.sae, outs[sae.room].data, L);
+    return { room: sae.room, F: sae.sae.F, k: sae.sae.k, featNow: f.max, argNow: f.arg, scale: sae.featScale };
+  }, [sae, outs, model]);
+
+  const onSelect = useCallback((s) => { if (s.room !== '__input') setSelected(s); }, []);
+  const onHover = useCallback((h) => setHover(h), []);
+
+  // ---------- render ----------
+  return (
+    <main className="flex min-h-0 flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-hidden">
+      <aside className="scroll-thin order-2 w-full shrink-0 space-y-3 border-line p-4 lg:order-1 lg:w-80 lg:overflow-y-auto lg:border-r">
+        <div>
+          <p className="text-xs uppercase tracking-[0.2em] text-dim">Lab · your model</p>
+          <p className="mt-2 text-sm leading-relaxed text-slate-100">Load any ONNX model and walk through its layers, then train a sparse autoencoder on one of them, right here in the browser.</p>
+        </div>
+        <ModelCard model={model} meta={meta} onFiles={onFiles} onExample={loadExample} status={status} error={error} clearError={() => setError('')} />
+        {model && kind && (
+          <InputCard
+            model={model} kind={kind} norm={norm} setNorm={setNorm} prep={prep} setPrep={setPrep} pixels={shownPixels} setPixels={setCustom}
+            ds={ds} item={item} setItem={setItem} probs={probs} classes={classes} pred={pred} xFinal={xFinal} source={source}
+          />
+        )}
+        {model && kind && (
+          <DataCard ds={ds} store={store} progress={progress} analyze={analyze} onFiles={onDatasetFiles} kind={kind} />
+        )}
+        {model && (
+          <RoomsCard model={model} roomNames={roomNames} setRoomNames={(n) => { setRoomNames(n); setStore(null); setSae(null); setSteer(null); }} />
+        )}
+      </aside>
+
+      <section className="relative order-1 h-[62vh] min-w-0 shrink-0 overflow-hidden lg:order-2 lg:h-auto lg:flex-1 lg:shrink">
+        <div className="absolute left-3 top-3 z-20 flex overflow-hidden rounded-md border border-line text-xs">
+          {[['space', '3D space'], ['latent', 'Latent space']].map(([k, t]) => (
+            <button key={k} onClick={() => setView(k)} className={`px-2.5 py-1 ${view === k ? 'bg-glow/15 text-glow' : 'bg-panel text-dim hover:text-slate-200'}`}>{t}</button>
+          ))}
+        </div>
+        {view === 'space' && sceneRooms.length > 0 && (
+          <Boundary>
+            <LabScene
+              rooms={sceneRooms} values={values} scales={scales} inputPixels={kind?.kind === 'image' ? shownPixels : null} inputChannels={kind?.C}
+              classes={classes} pred={pred} selected={selected} onSelect={onSelect} onHover={onHover} sae={saeNow} frameNonce={frameNonce}
+            />
+          </Boundary>
+        )}
+        {view === 'latent' && <LabLatent model={model} store={store} rooms={rooms} sae={sae} outs={outs} ds={ds} setItem={setItem} classes={classes} />}
+        <div className="pointer-events-none absolute bottom-3 left-3 rounded bg-black/50 px-2 py-1 text-[11px] text-slate-300">
+          {hover && outs ? <HoverText hover={hover} model={model} outs={outs} saeNow={saeNow} /> : view === 'space' ? 'Drag to orbit, scroll to zoom, click any unit.' : 'Each mark is one dataset item, placed by PCA of the chosen layer.'}
+        </div>
+        {steer && (
+          <div className="absolute right-3 top-3 z-20 flex items-center gap-2 rounded-md border border-warm/50 bg-black/70 px-2 py-1 text-xs text-warm">
+            Clamped {steer.sae ? `SAE feature ${steer.feature}` : `channel ${steer.c}${steer.p != null ? ' at one position' : ''}`} = {steer.value.toFixed(2)}
+            <button className="text-slate-200 hover:text-white" onClick={() => setSteer(null)}>release</button>
+          </div>
+        )}
+      </section>
+
+      <aside className="scroll-thin order-3 w-full shrink-0 space-y-3 border-line p-4 lg:w-[23rem] lg:overflow-y-auto lg:border-l">
+        <Boundary key={selected ? `${selected.room}:${selected.index}:${!!selected.sae}` : 'none'}>
+          <UnitCard
+            model={model} sel={selected} outs={outs} baseOuts={baseOuts} store={store} ds={ds} kind={kind} sae={sae} saeNow={saeNow}
+            steer={steer} setSteer={setSteer} classes={classes} onClose={() => setSelected(null)} setItem={setItem}
+          />
+        </Boundary>
+        {model && <Boundary><SaeCard model={model} rooms={rooms} store={store} sae={sae} setSae={setSae} ds={ds} kind={kind} norm={norm} onShow={() => { setView('space'); }} /></Boundary>}
+      </aside>
+    </main>
+  );
+}
+
+function maybeSoftmax(v) {
+  const a = Array.from(v);
+  const sum = a.reduce((s, t) => s + t, 0);
+  const probsAlready = a.every((t) => t >= 0 && t <= 1) && Math.abs(sum - 1) < 1e-3;
+  return probsAlready ? a : softmax(a);
+}
+
+function HoverText({ hover, model, outs, saeNow }) {
+  if (hover.sae) return <>SAE feature {hover.index}: <span className="text-glow">{saeNow?.featNow[hover.index]?.toFixed(3)}</span></>;
+  const r = model.describe(hover.room);
+  if (!r?.dims) return null;
+  const { c, p } = unitOf(r.layout, hover.index);
+  const v = outs[hover.room]?.data[hover.index];
+  return <>{r.op} · channel {c}{r.layout.P > 1 ? ` · ${posText(r.layout, p)}` : ''}: <span className="text-glow">{v?.toFixed(3)}</span></>;
+}
+
+// ---------- model ----------
+function ModelCard({ model, meta, onFiles, onExample, status, error, clearError }) {
+  const [drag, setDrag] = useState(false);
+  const s = model?.summary;
+  return (
+    <div className="space-y-2 rounded-lg border border-line p-3">
+      <div
+        onDragOver={(e) => { e.preventDefault(); setDrag(true); }}
+        onDragLeave={() => setDrag(false)}
+        onDrop={(e) => { e.preventDefault(); setDrag(false); onFiles(e.dataTransfer.files); }}
+        className={`rounded-md border border-dashed p-3 text-center text-xs ${drag ? 'border-glow bg-glow/10 text-glow' : 'border-line text-slate-300'}`}
+      >
+        Drop an <b>.onnx</b> file here (plus an optional <b>.meta.json</b>)
+        <label className="mt-2 block cursor-pointer text-glow/90 hover:text-glow">
+          or choose files
+          <input type="file" accept=".onnx,.json" multiple className="hidden" onChange={(e) => onFiles(e.target.files)} />
+        </label>
+      </div>
+      <div className="flex flex-wrap items-center gap-1">
+        <span className="text-[10px] text-dim">examples:</span>
+        {EXAMPLES.map((ex) => <Btn key={ex.file} onClick={() => onExample(ex.file)}>{ex.label}</Btn>)}
+      </div>
+      {status && <div className="text-xs text-glow">{status}</div>}
+      {error && (
+        <div className="rounded border border-red-900 p-2 text-xs text-red-300">
+          {error} <button className="ml-1 text-slate-300 underline" onClick={clearError}>dismiss</button>
+        </div>
+      )}
+      {model && (
+        <div className="space-y-1 text-xs text-slate-300">
+          <div className="font-semibold text-slate-100">{meta.name ?? model.fileName}</div>
+          {meta.description && <div className="text-dim">{meta.description}</div>}
+          <div>
+            {s.nodes} ops, {s.params.toLocaleString()} parameters · input {model.input.name} [{model.inputDims.join('×')}]{model.batchable ? ', batchable' : ''}
+          </div>
+          <div className="text-[10px] text-dim">
+            {Object.entries(s.opCounts).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k}×${v}`).join('  ')}
+          </div>
+        </div>
+      )}
+      <p className="text-[10px] leading-snug text-dim">
+        Everything runs on your machine with ONNX Runtime Web; the file never leaves the browser. From PyTorch: <code className="text-slate-300">torch.onnx.export(model, x, "m.onnx")</code>.
+      </p>
+    </div>
+  );
+}
+
+// ---------- input ----------
+function DrawBox({ onDrawn }) {
+  const cv = useRef(null), drawing = useRef(false), last = useRef(null);
+  useEffect(() => {
+    const ctx = cv.current.getContext('2d');
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.strokeStyle = '#fff'; ctx.lineWidth = 18;
+  }, []);
+  const pos = (e) => { const r = cv.current.getBoundingClientRect(); return [((e.clientX - r.left) / r.width) * 200, ((e.clientY - r.top) / r.height) * 200]; };
+  return (
+    <div>
+      <canvas
+        ref={cv} width={200} height={200}
+        className="h-[110px] w-[110px] touch-none cursor-crosshair rounded border border-line bg-[#070a12]"
+        onPointerDown={(e) => { drawing.current = true; last.current = pos(e); e.currentTarget.setPointerCapture(e.pointerId); }}
+        onPointerMove={(e) => {
+          if (!drawing.current) return;
+          const p = pos(e), ctx = cv.current.getContext('2d');
+          ctx.beginPath(); ctx.moveTo(...last.current); ctx.lineTo(...p); ctx.stroke(); last.current = p;
+          onDrawn(cv.current);
+        }}
+        onPointerUp={() => { drawing.current = false; onDrawn(cv.current); }}
+      />
+      <button className="mt-1 text-[10px] text-dim hover:text-slate-200" onClick={() => { cv.current.getContext('2d').clearRect(0, 0, 200, 200); onDrawn(cv.current); }}>clear drawing</button>
+    </div>
+  );
+}
+
+function InputCard({ model, kind, norm, setNorm, prep, setPrep, pixels, setPixels, ds, item, setItem, probs, classes, pred, xFinal, source }) {
+  const [invert, setInvert] = useState(false);
+  const top = probs ? probs.map((p, i) => [p, i]).sort((a, b) => b[0] - a[0]).slice(0, 5) : [];
+  return (
+    <div className="space-y-2 rounded-lg border border-line p-3">
+      <div className="text-sm text-slate-100">Input</div>
+      {kind.kind === 'image' ? (
+        <>
+          <div className="flex items-start gap-3">
+            <DrawBox onDrawn={(c) => setPixels(drawingToPixels(c, kind, prep))} />
+            <div className="space-y-1">
+              <Thumb pixels={pixels} kind={kind} size={78} />
+              <div className="text-[10px] leading-tight text-dim">what the model sees, {kind.H}×{kind.W}{kind.C === 3 ? ' RGB' : ''}</div>
+            </div>
+          </div>
+          <Field label="drawing fit">
+            <select value={prep} onChange={(e) => setPrep(e.target.value)} className={selectCls}>
+              <option value="mnist">MNIST (20px box, centre of mass)</option>
+              <option value="fit">fit with margin</option>
+              <option value="stretch">stretch</option>
+              {kind.H === 8 && <option value="optdigits">optdigits 8x8</option>}
+            </select>
+          </Field>
+          <label className="block text-xs text-dim">
+            or upload a picture{' '}
+            <input type="file" accept="image/*" className="w-40 text-[10px]" onChange={async (e) => e.target.files[0] && setPixels(await imageFileToPixels(e.target.files[0], kind, invert))} />
+          </label>
+          <label className="flex items-center gap-1 text-[10px] text-dim">
+            <input type="checkbox" checked={invert} onChange={(e) => setInvert(e.target.checked)} /> invert uploads (dark ink on light paper)
+          </label>
+        </>
+      ) : (
+        <div className="space-y-1">
+          <VectorStrip values={xFinal} size={240} />
+          <div className="flex gap-1">
+            <Btn onClick={() => { let s = 1; setPixels(Float32Array.from({ length: model.inputSize }, () => { s = (s * 16807) % 2147483647; return (s / 2147483647) * 2 - 1; })); }}>random</Btn>
+            <Btn onClick={() => setPixels(new Float32Array(model.inputSize))}>zeros</Btn>
+          </div>
+          <div className="text-[10px] text-dim">A {model.inputDims.join('×')} vector input; use a dataset below to feed real items.</div>
+        </div>
+      )}
+      {ds && (
+        <div className="flex items-center gap-1 text-xs">
+          <span className="text-dim">dataset item</span>
+          <Btn onClick={() => setItem((i) => Math.max(0, i - 1))}>‹</Btn>
+          <span className="w-16 text-center text-slate-200">{item + 1} / {ds.n}</span>
+          <Btn onClick={() => setItem((i) => Math.min(ds.n - 1, i + 1))}>›</Btn>
+          <Btn onClick={() => setItem(Math.floor(Math.random() * ds.n))}>random</Btn>
+          {ds.labels && <span className="ml-1 text-dim">label {ds.classes?.[ds.labels[item]] ?? ds.labels[item]}</span>}
+          {source === 'custom' && <span className="ml-1 text-warm">showing your input</span>}
+        </div>
+      )}
+      {kind.kind === 'image' && (
+        <Field label="normalize pixels as">
+          <select value={norm} onChange={(e) => setNorm(e.target.value)} className={selectCls}>
+            {Object.entries(NORMS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+          </select>
+        </Field>
+      )}
+      {probs && probs.length <= 1000 && (
+        <div className="space-y-0.5 pt-1 text-xs">
+          <div className="flex items-baseline justify-between">
+            <span className="text-dim">Model says</span>
+            <span className="text-xl font-semibold text-warm">{classes?.[pred] ?? pred}</span>
+          </div>
+          {top.map(([p, i]) => (
+            <div key={i} className="flex items-center gap-2">
+              <span className="w-10 truncate text-dim">{classes?.[i] ?? i}</span>
+              <div className="h-1.5 flex-1 overflow-hidden rounded bg-line"><div className={`h-full ${i === pred ? 'bg-warm' : 'bg-glow/60'}`} style={{ width: `${p * 100}%` }} /></div>
+              <span className="w-9 text-right text-dim">{(p * 100).toFixed(0)}%</span>
+            </div>
+          ))}
+          <div className="text-[10px] text-dim">top 5 of {probs.length} (softmax of the first output if it is not already probabilities)</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------- dataset ----------
+function DataCard({ ds, store, progress, analyze, onFiles, kind }) {
+  const [invert, setInvert] = useState(false);
+  return (
+    <div className="space-y-2 rounded-lg border border-line p-3 text-xs">
+      <div className="text-sm text-slate-100">Dataset</div>
+      {ds ? (
+        <div className="text-slate-300">
+          {ds.name}: {ds.n} items{ds.labels ? `, ${ds.classes?.length ?? '?'} labels` : ', unlabeled'}. <span className="text-dim">{ds.source}</span>
+        </div>
+      ) : (
+        <div className="text-dim">No dataset yet. Rooms, top examples, the SAE and the latent view all need one.</div>
+      )}
+      <label className="block text-dim">
+        add one: images (labels from folder or "label_name.png"), .npy (x and optional y), or a dataset .json
+        <input type="file" multiple accept="image/*,.npy,.json" className="mt-1 block w-full text-[10px]" onChange={(e) => onFiles(e.target.files, invert)} />
+      </label>
+      <label className="block cursor-pointer text-dim">
+        or a whole folder
+        <input type="file" multiple webkitdirectory="" className="mt-1 block w-full text-[10px]" onChange={(e) => onFiles(e.target.files, invert)} />
+      </label>
+      {kind.kind === 'image' && (
+        <label className="flex items-center gap-1 text-[10px] text-dim">
+          <input type="checkbox" checked={invert} onChange={(e) => setInvert(e.target.checked)} /> invert images (dark ink on light paper)
+        </label>
+      )}
+      {ds && (
+        <div className="flex items-center gap-2">
+          <Btn onClick={analyze} disabled={progress != null}>{store ? 'Re-run dataset' : 'Run dataset'}</Btn>
+          {progress != null && (
+            <div className="h-1.5 flex-1 overflow-hidden rounded bg-line"><div className="h-full bg-glow" style={{ width: `${progress * 100}%` }} /></div>
+          )}
+          {store && progress == null && <span className="text-dim">{store.N} items analysed{store.labels ? `, accuracy ${(100 * store.preds.filter((p, i) => p === store.labels[i]).length / store.N).toFixed(1)}%` : ''}</span>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------- which tensors are rooms ----------
+function RoomsCard({ model, roomNames, setRoomNames }) {
+  const [open, setOpen] = useState(false);
+  const [pick, setPick] = useState(new Set(roomNames));
+  useEffect(() => setPick(new Set(roomNames)), [roomNames]);
+  return (
+    <div className="space-y-2 rounded-lg border border-line p-3 text-xs">
+      <div className="flex items-center justify-between">
+        <span className="text-sm text-slate-100">Rooms</span>
+        <Btn onClick={() => setOpen((o) => !o)}>{open ? 'done' : `choose (${roomNames.length} of ${model.allRooms.length})`}</Btn>
+      </div>
+      {!open && <div className="text-dim">Each chosen tensor is one room. The defaults are activation outputs and the final output.</div>}
+      {open && (
+        <>
+          <div className="max-h-64 space-y-0.5 overflow-y-auto scroll-thin">
+            {model.allRooms.map((r) => (
+              <label key={r.name} className="flex items-center gap-2 text-[11px]">
+                <input type="checkbox" checked={pick.has(r.name)} onChange={(e) => { const s = new Set(pick); e.target.checked ? s.add(r.name) : s.delete(r.name); setPick(s); }} />
+                <span className="w-24 truncate text-slate-200">{r.op}</span>
+                <span className="text-dim">{r.dims.join('×')}</span>
+                <span className="truncate text-[10px] text-dim">{r.name}</span>
+              </label>
+            ))}
+          </div>
+          <Btn on onClick={() => { setRoomNames(model.allRooms.map((r) => r.name).filter((n) => pick.has(n))); setOpen(false); }}>Apply (re-runs the dataset)</Btn>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ---------- one unit's room ----------
+function UnitCard(props) {
+  if (!props.model || !props.sel) {
+    return (
+      <div className="rounded-lg border border-line p-3 text-sm text-slate-300">
+        Click any unit in the space to open its room. Rooms fill in once a dataset has run.
+      </div>
+    );
+  }
+  return <UnitBody {...props} />;
+}
+
+function UnitBody({ model, sel, outs, baseOuts, store, ds, kind, sae, saeNow, steer, setSteer, classes, onClose, setItem }) {
+  const r = model.describe(sel.room);
+  const L = r.layout;
+  const isFeat = !!sel.sae;
+  const { c, p } = isFeat ? { c: sel.index, p: saeNow?.argNow?.[sel.index] ?? 0 } : unitOf(L, sel.index);
+  const valueNow = isFeat ? saeNow?.featNow[sel.index] ?? 0 : outs?.[sel.room]?.data[sel.index] ?? 0;
+  const chNow = isFeat ? valueNow : (() => { let m = -Infinity; for (let q = 0; q < L.P; q++) m = Math.max(m, outs?.[sel.room]?.data[L.idx(c, q)] ?? -Infinity); return m; })();
+
+  // dataset statistics for this channel or feature
+  const acts = useMemo(() => {
+    if (isFeat) return sae?.stats ? Float32Array.from({ length: sae.N }, (_, i) => sae.stats.featMax[i * sae.sae.F + c]) : null;
+    return store?.stats[sel.room] ? channelActs(store, sel.room, c) : null;
+  }, [isFeat, sae, store, sel.room, c]);
+  const args = (i) => (isFeat ? sae.stats.featArg[i * sae.sae.F + c] : store.stats[sel.room].chArg[i * L.C + c]);
+  const top = acts ? topItems(acts, 12) : [];
+  const hist = acts ? histogramOf(acts) : null;
+  const labels = store?.labels;
+  const pur = acts && labels ? labelPurity(acts, labels, 12) : null;
+  const max = acts ? Math.max(...acts) : Math.abs(chNow) || 1;
+  const lo = acts ? Math.min(0, Math.min(...acts)) : 0;
+
+  const steering = steer && steer.room === sel.room && (isFeat ? steer.sae && steer.feature === c : !steer.sae && steer.c === c);
+  const [scope, setScope] = useState('channel');
+  const setValue = (v) => setSteer(isFeat ? { room: sel.room, sae: true, feature: c, value: v } : { room: sel.room, c, p: scope === 'unit' ? p : null, value: v });
+  const bOut = baseOuts?.[model.outputName]?.data, sOut = outs?.[model.outputName]?.data;
+  const argmax = (a) => (a ? Array.from(a).indexOf(Math.max(...a)) : null);
+
+  return (
+    <div className="space-y-3 rounded-lg border border-line p-3">
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <div className="text-[10px] uppercase tracking-[0.18em] text-dim">room</div>
+          <div className="text-sm font-semibold text-slate-100">{isFeat ? `SAE feature ${c}` : `${r.op}, channel ${c}`}</div>
+          <div className="text-[10px] text-dim">
+            {isFeat ? `of the SAE on ${r.op} (${r.dims.join('×')})` : `${r.name} · ${r.dims.join('×')}${L.P > 1 ? ` · selected at ${posText(L, p)}` : ''}`}
+          </div>
+        </div>
+        <Btn onClick={onClose}>Close</Btn>
+      </div>
+      <div className="flex items-baseline gap-2">
+        <span className="text-3xl font-semibold text-glow">{chNow.toFixed(2)}</span>
+        <span className="text-xs text-dim">{L.P > 1 ? 'max over positions for this input' : 'for this input'}{acts ? `, ${max ? Math.round((chNow / max) * 100) : 0}% of its dataset max` : ''}</span>
+      </div>
+      {!isFeat && L.P > 1 && <div className="text-[11px] text-dim">This unit alone: {valueNow.toFixed(3)}</div>}
+
+      {!acts && <NotShown>Dataset statistics. Add a dataset and run it to fill this room.</NotShown>}
+      {hist && (
+        <div>
+          <div className="mb-1 text-xs text-slate-200">Over {acts.length} dataset items</div>
+          <Hist hist={hist} current={chNow} />
+          <div className="text-[10px] text-dim">active on {Array.from(acts).filter((v) => v > 0).length} of {acts.length}; orange line is this input</div>
+        </div>
+      )}
+      {top.length > 0 && ds && (
+        <div>
+          <div className="mb-1 text-xs text-slate-200">Top 12 items {L.P > 1 && <span className="text-dim">(box: where it fired)</span>}</div>
+          <div className="grid grid-cols-6 gap-1">
+            {top.map((i) => (
+              <button key={i} className="text-center" onClick={() => setItem(i)} title="load this item">
+                <Thumb pixels={kind.kind === 'image' ? displayOf(ds, i, kind) : null} kind={kind} size={44} box={boxFor(L, args(i), kind)} />
+                {kind.kind !== 'image' && <div className="h-6 rounded bg-line" />}
+                <div className="text-[9px] text-dim">{labels ? `${classes?.[labels[i]] ?? labels[i]} · ` : ''}{acts[i].toFixed(1)}</div>
+              </button>
+            ))}
+          </div>
+          {pur && <div className="mt-1 text-[11px] text-slate-300">{pur.count} of its top 12 are labeled {classes?.[pur.label] ?? pur.label}.</div>}
+          {L.P > 1 && kind.kind === 'image' && <div className="text-[10px] text-dim">Boxes scale the layer's grid onto the image; they show roughly where, not the exact receptive field.</div>}
+        </div>
+      )}
+
+      <div className="space-y-1.5 rounded-md border border-line p-2">
+        <div className="flex items-center justify-between text-xs">
+          <span className="text-slate-200"><Term k="clamp">Clamp</Term> {isFeat ? 'this feature' : scope === 'channel' ? 'this channel' : 'this unit'}</span>
+          <Btn on={steering} onClick={() => (steering ? setSteer(null) : setValue(+max.toFixed(3)))}>{steering ? 'Clamped' : 'Clamp it'}</Btn>
+        </div>
+        {!isFeat && L.P > 1 && (
+          <div className="flex gap-1">
+            <Btn on={scope === 'channel'} onClick={() => setScope('channel')}>every position</Btn>
+            <Btn on={scope === 'unit'} onClick={() => setScope('unit')}>only {posText(L, p)}</Btn>
+          </div>
+        )}
+        <input
+          type="range" min={+lo.toFixed(3)} max={+(1.5 * max || 1).toFixed(3)} step={(1.5 * max || 1) / 200}
+          value={steering ? steer.value : max} onChange={(e) => setValue(Number(e.target.value))} className="w-full accent-[#ffb547]"
+        />
+        <div className="flex justify-between text-[10px] text-dim"><span>{lo.toFixed(1)}</span><span>dataset max {max.toFixed(2)}</span><span>{(1.5 * max).toFixed(1)}</span></div>
+        {steering && bOut && sOut && (
+          <div className="text-xs text-slate-300">
+            Answer without the clamp: <span className="text-glow">{classes?.[argmax(bOut)] ?? argmax(bOut)}</span>, with it:{' '}
+            <span className={argmax(bOut) !== argmax(sOut) ? 'text-warm' : 'text-glow'}>{classes?.[argmax(sOut)] ?? argmax(sOut)}</span>.
+            {isFeat && ' The SAE error term is kept, so only this feature changes.'}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ---------- SAE ----------
+function SaeCard({ model, rooms, store, sae, setSae, ds, kind, norm, onShow }) {
+  const candidates = rooms.filter((r) => !r.isOutput && r.layout.C >= 4 && store?.stats[r.name]?.full);
+  const [room, setRoom] = useState('');
+  const [mult, setMult] = useState(8);
+  const [k, setK] = useState(8);
+  const [steps, setSteps] = useState(1500);
+  const [train, setTrain] = useState(null); // {curve, dead, step, phase}
+  const worker = useRef(null);
+  useEffect(() => { if (!room && candidates.length) setRoom(candidates[candidates.length - 1].name); }, [candidates.length]); // eslint-disable-line
+  const r = rooms.find((x) => x.name === room);
+  const D = r?.layout.C ?? 0;
+  useEffect(() => { if (D) setK(Math.max(1, Math.min(16, Math.round(D / 8)))); }, [D]);
+
+  const start = () => {
+    const iv = itemVectors(store, room);
+    if (!iv) return;
+    const X = sampleRows(iv, 20000);
+    worker.current?.terminate();
+    const w = new Worker(new URL('../../lib/lab/sae.worker.js', import.meta.url), { type: 'module' });
+    worker.current = w;
+    const curve = [];
+    setTrain({ curve: [], step: 0, dead: 0, phase: 'training' });
+    w.onmessage = async (e) => {
+      const m = e.data;
+      if (m.type === 'progress') {
+        if (m.fvu != null) curve.push([m.step, m.fvu]);
+        setTrain({ curve: [...curve], step: m.step, dead: m.dead, phase: 'training' });
+      } else if (m.type === 'stats') setTrain((t) => ({ ...t, phase: `scoring features ${(m.frac * 100).toFixed(0)}%` }));
+      else if (m.type === 'done') {
+        const s = m.sae;
+        const featScale = (() => { const a = Array.from(m.stats.featMax).filter((v) => v > 0).sort((x, y) => x - y); return a[Math.floor(a.length * 0.99)] || 1; })();
+        const alive = new Set();
+        for (let i = 0; i < m.stats.featMax.length; i++) if (m.stats.featMax[i] > 0) alive.add(i % s.F);
+        setSae({ room, sae: s, metrics: m.metrics, stats: m.stats, N: store.N, featScale, alive: alive.size });
+        setTrain((t) => ({ ...t, phase: 'measuring accuracy with the SAE in the loop' }));
+        // accuracy when every vector of this layer is replaced by its reconstruction
+        const n = Math.min(200, store.N);
+        let agree = 0, correct = 0, correctBase = 0;
+        const tf = saeTransform(s, r.layout, 'recon');
+        for (let i = 0; i < n; i++) {
+          const xi = modelInputOf(ds, i, kind, norm);
+          const o = await model.runWith(xi, room, tf);
+          const lg = o[model.outputName].data;
+          const pr = Array.from(lg).indexOf(Math.max(...lg));
+          if (pr === store.preds[i]) agree++;
+          if (store.labels) { if (pr === store.labels[i]) correct++; if (store.preds[i] === store.labels[i]) correctBase++; }
+        }
+        setSae((x) => ({ ...x, loop: { n, agree: agree / n, acc: store.labels ? correct / n : null, accBase: store.labels ? correctBase / n : null } }));
+        setTrain((t) => ({ ...t, phase: 'done' }));
+        w.terminate();
+        onShow();
+      }
+    };
+    w.postMessage({ X, D, F: D * mult, k, steps, lr: 2e-3, batch: 128, seed: 3, items: { items: iv.items, N: iv.N, P: iv.P } });
+  };
+
+  const purityCompare = useMemo(() => {
+    if (!sae?.stats || !store?.labels) return null;
+    const F = sae.sae.F, N = sae.N;
+    const pf = [], pn = [];
+    for (let f = 0; f < F; f++) {
+      const a = Float32Array.from({ length: N }, (_, i) => sae.stats.featMax[i * F + f]);
+      const p = labelPurity(a, store.labels, 12);
+      if (p) pf.push(p.value);
+    }
+    const L = model.describe(sae.room).layout;
+    for (let c = 0; c < L.C; c++) { const p = labelPurity(channelActs(store, sae.room, c), store.labels, 12); if (p) pn.push(p.value); }
+    return { pf, pn };
+  }, [sae, store, model]);
+
+  const download = () => {
+    const blob = new Blob([JSON.stringify(toJSON(sae.sae, { model: model.fileName, tensor: sae.room, metrics: sae.metrics }))], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `sae_${sae.room.replace(/[^a-z0-9]+/gi, '_')}.json`;
+    a.click();
+  };
+  const importSae = async (file) => {
+    const j = JSON.parse(await file.text());
+    const target = rooms.find((x) => x.name === j.tensor) ?? r;
+    if (!target || target.layout.C !== j.D) { alert(`This SAE expects ${j.D} channels; pick a layer with that many.`); return; }
+    const s = fromJSON(j);
+    const iv = itemVectors(store, target.name);
+    const { featureStats } = await import('../../lib/lab/saeLab.js');
+    const stats = featureStats(s, iv);
+    const a = Array.from(stats.featMax).filter((v) => v > 0).sort((x, y) => x - y);
+    setSae({ room: target.name, sae: s, metrics: j.metrics ?? null, stats, N: store.N, featScale: a[Math.floor(a.length * 0.99)] || 1, alive: new Set(Array.from(stats.featMax.keys()).filter((i) => stats.featMax[i] > 0).map((i) => i % s.F)).size });
+    onShow();
+  };
+
+  return (
+    <div className="space-y-2 rounded-lg border border-line p-3 text-xs">
+      <div className="text-sm text-slate-100">Add a sparse autoencoder</div>
+      <p className="leading-snug text-slate-400">
+        Pick a layer and train a <Term k="sparse autoencoder" /> on it here, in a background thread. Its features dock beside the layer in the space, each with its own room.
+        <Cite id="bricken2023" /><Cite id="gao2024" />
+      </p>
+      {!store && <NotShown>An SAE until a dataset has run; it learns from the layer's activations on that data.</NotShown>}
+      {store && candidates.length === 0 && <NotShown>A layer small enough to train on here (rooms over 30 million stored values are skipped).</NotShown>}
+      {store && candidates.length > 0 && (
+        <>
+          <Field label="layer">
+            <select value={room} onChange={(e) => setRoom(e.target.value)} className={`${selectCls} max-w-44`}>
+              {candidates.map((c) => <option key={c.name} value={c.name}>{c.op} {c.dims.join('×')}</option>)}
+            </select>
+          </Field>
+          <div className="text-[10px] text-dim">
+            {r?.layout.kind === 'spatial' ? `One ${D}-dim vector per pixel of the ${r.layout.H}×${r.layout.W} map, ` : r?.layout.kind === 'seq' ? `One ${D}-dim vector per token, ` : `One ${D}-dim vector per item, `}
+            {store.N * (r?.layout.P ?? 1)} vectors in all (up to 20,000 sampled for training).
+          </div>
+          <Field label="dictionary size">
+            <select value={mult} onChange={(e) => setMult(+e.target.value)} className={selectCls}>
+              {[2, 4, 8, 16].map((m) => <option key={m} value={m}>{m}× = {D * m} features</option>)}
+            </select>
+          </Field>
+          <Field label="active per vector (k)">
+            <input type="number" min={1} max={64} value={k} onChange={(e) => setK(Math.max(1, +e.target.value))} className={`${selectCls} w-16`} />
+          </Field>
+          <Field label="training steps">
+            <select value={steps} onChange={(e) => setSteps(+e.target.value)} className={selectCls}>
+              {[500, 1500, 3000, 6000].map((s) => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </Field>
+          <div className="flex gap-1.5">
+            <Btn on onClick={start} disabled={train?.phase === 'training'}>{sae ? 'Train again' : 'Train SAE'}</Btn>
+            {train?.phase === 'training' && <Btn onClick={() => { worker.current?.terminate(); setTrain(null); }}>Stop</Btn>}
+            <label className="cursor-pointer rounded-md border border-line px-2.5 py-1 text-slate-200 hover:border-glow/40">
+              Load SAE .json<input type="file" accept=".json" className="hidden" onChange={(e) => e.target.files[0] && importSae(e.target.files[0])} />
+            </label>
+          </div>
+        </>
+      )}
+      {train && (
+        <div className="space-y-1">
+          <Curve points={train.curve} label={`held-out unexplained variance by step · step ${train.step} of ${steps} · ${train.dead} features idle · ${train.phase}`} />
+        </div>
+      )}
+      {sae?.metrics && (
+        <div className="space-y-1 rounded-md border border-line p-2 text-slate-300">
+          <div>
+            Explains <span className="text-glow">{(100 * sae.metrics.varianceExplained).toFixed(1)}%</span> of held-out variance ({sae.metrics.nTest} vectors) with {sae.sae.k} of {sae.sae.F} features on;{' '}
+            {sae.alive} features fire on at least one item.
+          </div>
+          {sae.loop && (
+            <div>
+              With the SAE's reconstruction in place of the layer, the model's answer is unchanged on {(100 * sae.loop.agree).toFixed(0)}% of {sae.loop.n} items
+              {sae.loop.acc != null && ` (accuracy ${(100 * sae.loop.acc).toFixed(1)}% vs ${(100 * sae.loop.accBase).toFixed(1)}%)`}.
+            </div>
+          )}
+          {purityCompare && (
+            <div className="text-[11px]">
+              Share of top 12 items with one label: channels median {median(purityCompare.pn).toFixed(2)} (n = {purityCompare.pn.length}), features median {median(purityCompare.pf).toFixed(2)} (n = {purityCompare.pf.length}).
+              <span className="text-dim"> Units active on fewer than 12 items are left out; a label is a rough stand-in for one meaning.</span>
+            </div>
+          )}
+          <div className="flex gap-1.5 pt-1">
+            <Btn onClick={download}>Download SAE .json</Btn>
+            <Btn onClick={() => setSae(null)}>Remove</Btn>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------- latent space ----------
+function LabLatent({ model, store, rooms, sae, outs, ds, setItem, classes }) {
+  const options = useMemo(() => {
+    const o = rooms.filter((r) => store?.stats[r.name]?.full).map((r) => ({ key: r.name, label: `${r.op} ${r.dims.join('×')}` }));
+    if (sae?.stats) o.push({ key: '__sae', label: `SAE features (${sae.sae.F})` });
+    return o;
+  }, [rooms, store, sae]);
+  const [key, setKey] = useState('');
+  const [highlight, setHighlight] = useState(null);
+  const [measures, setMeasures] = useState({});
+  useEffect(() => { if (!options.find((o) => o.key === key) && options.length) setKey(options[Math.max(0, options.length - 2)].key); }, [options]); // eslint-disable-line
+  const X = useMemo(() => {
+    if (!store || !key) return null;
+    if (key === '__sae') return Array.from({ length: sae.N }, (_, i) => sae.stats.featMax.subarray(i * sae.sae.F, (i + 1) * sae.sae.F));
+    const st = store.stats[key];
+    return Array.from({ length: store.N }, (_, i) => st.full.subarray(i * st.layout.size, (i + 1) * st.layout.size));
+  }, [store, key, sae]);
+  const P = useMemo(() => (X ? pcaOf(X) : null), [X]);
+  const me = useMemo(() => {
+    if (!outs || !key) return null;
+    if (key === '__sae') { const L = model.describe(sae.room).layout; return featuresNow(sae.sae, outs[sae.room].data, L).max; }
+    return outs[key]?.data ?? null;
+  }, [outs, key, sae, model]);
+  if (!store) return <div className="flex h-full items-center justify-center p-6 text-sm text-dim">Run a dataset first; the latent view places every item by its activations.</div>;
+  const measure = () => {
+    if (!store.labels) return;
+    setMeasures((m) => ({ ...m, [key]: { knn: knnAccOf(X, store.labels), sep: separationOf(X, store.labels) } }));
+  };
+  return (
+    <div className="relative h-full w-full">
+      {P && <LatentCloud P={P} labels={store.labels} classes={classes} me={me} highlight={highlight} onPick={(i) => setItem(i)} />}
+      <div className="absolute right-3 top-3 z-20 w-72 space-y-2 rounded-lg border border-line bg-panel/90 p-3 text-xs">
+        <Field label="layer">
+          <select value={key} onChange={(e) => setKey(e.target.value)} className={`${selectCls} max-w-44`}>
+            {options.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
+          </select>
+        </Field>
+        {P && <div className="text-slate-300">These 3 axes keep {(100 * P.explained.reduce((a, b) => a + b, 0)).toFixed(0)}% of the spread in {P.D} dimensions.<Cite id="jolliffe2016" /></div>}
+        {store.labels && (
+          <Field label="highlight">
+            <select value={highlight ?? ''} onChange={(e) => setHighlight(e.target.value === '' ? null : +e.target.value)} className={selectCls}>
+              <option value="">none</option>
+              {(classes ?? []).map((c, i) => <option key={i} value={i}>{c}</option>)}
+            </select>
+          </Field>
+        )}
+        {store.labels && (
+          <div>
+            {measures[key] ? (
+              <div className="text-slate-300">
+                Full space: 5-nearest-neighbour accuracy <span className="text-glow">{(100 * measures[key].knn).toFixed(1)}%</span>, spacing ratio <span className="text-glow">{measures[key].sep.toFixed(2)}</span>
+                <Cite id="alain2016" />
+              </div>
+            ) : (
+              <Btn onClick={measure}>Measure how this layer groups labels</Btn>
+            )}
+          </div>
+        )}
+        <div className="text-[10px] text-dim">Click a mark to load that item. The 3D view hides the other {P ? P.D - 3 : 0} dimensions; the measures use all of them.<Cite id="wattenberg2016" /></div>
+      </div>
+    </div>
+  );
+}
