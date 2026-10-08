@@ -379,6 +379,19 @@ export default function LabPage() {
     } else if (!pendingSession.sae && store) setPendingSession(null);
   }, [pendingSession, model, store]); // eslint-disable-line
 
+  // keyboard: arrows step through dataset items, P pins or unpins, Esc closes the room
+  useEffect(() => {
+    const key = (e) => {
+      if (['INPUT', 'SELECT', 'TEXTAREA'].includes(e.target.tagName)) return;
+      if (e.key === 'ArrowRight' && ds) setItem((i) => Math.min(ds.n - 1, i + 1));
+      else if (e.key === 'ArrowLeft' && ds) setItem((i) => Math.max(0, i - 1));
+      else if ((e.key === 'p' || e.key === 'P') && outs) setPinned((pn) => (pn ? null : { outs, pixels: shownPixels, x: xFinal }));
+      else if (e.key === 'Escape') setSelected(null);
+    };
+    window.addEventListener('keydown', key);
+    return () => window.removeEventListener('keydown', key);
+  }, [ds, outs, shownPixels, xFinal, setItem]);
+
   // drop a model anywhere on the page
   const [dragAll, setDragAll] = useState(false);
   useEffect(() => {
@@ -418,6 +431,7 @@ export default function LabPage() {
               <li>"What does it control?" clamps the unit on many items and counts how the answer moves. That is evidence of cause, not just correlation.</li>
               <li>Train a sparse autoencoder on a layer to split it into features that are often easier to name. They dock beside the layer.</li>
               <li>The latent view places every dataset item by how a layer represents it.</li>
+              <li>Keys: ← → step through dataset items, P pins the input for comparison, Esc closes a room.</li>
             </ol>
           </details>
         </div>
