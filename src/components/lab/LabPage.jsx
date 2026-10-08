@@ -19,7 +19,7 @@ import { PixelGrid } from '../ui.jsx';
 import { describeUnit, searchUnits } from '../../lib/lab/summary.js';
 import { ScoreBadge } from '../FeatureRoom.jsx';
 import { occlusionMap, readClassProb, readChannelMax } from '../../lib/lab/occlusion.js';
-import { unitEdges } from '../../lib/lab/edges.js';
+import { unitEdges, tracePath } from '../../lib/lab/edges.js';
 import { pcaOf, knnAccOf, separationOf } from '../../lib/latent.js';
 
 const BASE = import.meta.env.BASE_URL;
@@ -79,6 +79,7 @@ export default function LabPage() {
   const [focusRoom, setFocusRoom] = useState(null);
   const [expl, setExpl] = useState(null); // explanations from scripts/explain_lab.py
   const [pinned, setPinned] = useState(null);
+  const [traceOn, setTraceOn] = useState(false);
   const [outKind, setOutKind] = useState('classes'); // how to read the first output: class scores or raw values
   const [modelSrc, setModelSrc] = useState(null); // {example} or {url, metaUrl, dataUrl}, saved in sessions
   const [pendingSession, setPendingSession] = useState(null); // {outs, pixels, label} of a pinned input, for difference mode
@@ -299,6 +300,17 @@ export default function LabPage() {
   }, [sae, outs, model]);
 
   const onSelect = useCallback((s) => { if (s.room !== '__input') setSelected(s); }, []);
+  // the answer traced back through the strongest positive contributions, layer by layer
+  const trace = useMemo(() => {
+    if (!traceOn || !outs || !model || pred == null || kind?.kind === 'tokens') return null;
+    const outRoom = rooms.find((r) => r.name === model.outputName);
+    if (!outRoom) return null;
+    try {
+      const layoutFor = (n) => (n === '__input' ? inputRoom.layout : model.describe(n).layout);
+      return tracePath(model, roomNames, outs, xFinal, { room: outRoom.name, index: pred }, layoutFor);
+    } catch { return null; }
+  }, [traceOn, outs, model, pred, rooms, roomNames, xFinal, inputRoom, kind]);
+
   // incoming edges of the selected unit on the current input (none for SAE features)
   const edges = useMemo(() => {
     if (!selected || selected.sae || !outs || !model) return null;
@@ -473,7 +485,7 @@ export default function LabPage() {
           <Boundary>
             <LabScene
               rooms={sceneRooms} values={values} scales={scales} inputPixels={kind?.kind === 'image' ? shownPixels : null} inputChannels={kind?.C}
-              classes={classes} pred={pred} selected={selected} onSelect={onSelect} onHover={onHover} sae={saeNow} frameNonce={frameNonce} focusRoom={focusRoom} edges={edges}
+              classes={classes} pred={pred} selected={selected} onSelect={onSelect} onHover={onHover} sae={saeNow} frameNonce={frameNonce} focusRoom={focusRoom} edges={edges} trace={trace}
             />
           </Boundary>
         )}
@@ -529,7 +541,15 @@ export default function LabPage() {
                 {outKind === 'classes' && <PatchPanel model={model} rooms={sceneRooms.slice(1)} pinned={pinned} xNow={xFinal} classes={classes} />}
               </>
             ) : (
+              <>
               <Btn onClick={() => setPinned({ outs, pixels: shownPixels, x: xFinal })} title="freeze this input, then change the input to compare">Pin this input to compare</Btn>
+              {kind?.kind !== 'tokens' && outKind === 'classes' && (
+                <Btn on={traceOn} onClick={() => setTraceOn((t) => !t)} title="follow the largest positive contribution from the answer down to the input">
+                  {traceOn ? 'Tracing the answer' : 'Trace the answer'}
+                </Btn>
+              )}
+              {traceOn && trace && <span className="text-[10px] text-dim">{trace.length} steps; each is the strongest positive contributor to the one above, on this input</span>}
+              </>
             )}
           </div>
         )}

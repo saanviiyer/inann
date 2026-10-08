@@ -62,3 +62,30 @@ export function unitEdges(model, roomNames, outs, room, index, layout, inputTens
   contrib = contrib.filter((e) => e.v !== 0).sort((a, b) => Math.abs(b.v) - Math.abs(a.v)).slice(0, limit);
   return { fromRoom, perChannel: src.op === 'Conv' || rd.length === 3, exact, edges: contrib };
 }
+
+// Trace the answer back: from a unit, repeatedly step to the input unit with the largest positive
+// contribution; for a conv channel, land on that channel's most active position. Stops when a
+// room has no traceable linear op (or at the input).
+export function tracePath(model, roomNames, outs, inputValues, start, layoutFor, maxSteps = 12) {
+  const path = [start];
+  let cur = start;
+  for (let s = 0; s < maxSteps; s++) {
+    if (cur.room === '__input') break;
+    const L = layoutFor(cur.room);
+    const e = unitEdges(model, roomNames, outs, cur.room, cur.index, L, inputValues, Infinity);
+    if (!e || !e.edges.length) break;
+    const best = e.edges.filter((t) => t.v > 0).sort((a, b) => b.v - a.v)[0] ?? e.edges[0];
+    const LS = layoutFor(e.fromRoom);
+    let index = best.k;
+    if (e.perChannel && LS.kind === 'spatial') {
+      // the most active position of that channel on this input
+      const data = e.fromRoom === '__input' ? inputValues : outs[e.fromRoom]?.data;
+      let bp = 0, bv = -Infinity;
+      if (data) for (let p = 0; p < LS.P; p++) { const v = data[LS.idx(best.k, p)]; if (v > bv) { bv = v; bp = p; } }
+      index = LS.idx(e.fromRoom === '__input' ? 0 : best.k, bp);
+    }
+    cur = { room: e.fromRoom, index };
+    path.push(cur);
+  }
+  return path;
+}

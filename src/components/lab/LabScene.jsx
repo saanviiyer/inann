@@ -180,6 +180,35 @@ function Marker({ pos, size = 0.25 }) {
 }
 
 // Frame the whole tower, or (focus) one room. Tall towers open on their first few rooms.
+// The traced answer: a warm line through the chosen unit of each room, with a light running along it.
+function TracePath({ points }) {
+  const line = useMemo(() => {
+    const g = new THREE.BufferGeometry();
+    g.setFromPoints(points.map((p) => new THREE.Vector3(...p)));
+    return g;
+  }, [points]);
+  const dot = useRef();
+  const curve = useMemo(() => new THREE.CatmullRomCurve3(points.map((p) => new THREE.Vector3(...p)), false, 'centripetal'), [points]);
+  useFrame(({ clock }) => { if (dot.current) dot.current.position.copy(curve.getPoint((clock.elapsedTime * 0.25) % 1)); });
+  return (
+    <group>
+      <line geometry={line}>
+        <lineBasicMaterial color="#ffd27a" toneMapped={false} />
+      </line>
+      {points.map((p, i) => (
+        <mesh key={i} position={p}>
+          <sphereGeometry args={[0.09, 12, 8]} />
+          <meshBasicMaterial color="#ffb547" toneMapped={false} />
+        </mesh>
+      ))}
+      <mesh ref={dot}>
+        <sphereGeometry args={[0.12, 12, 8]} />
+        <meshBasicMaterial color="#fff2c4" toneMapped={false} />
+      </mesh>
+    </group>
+  );
+}
+
 // Attention arcs: for a selected cell of a [heads, query, key] attention map, arcs from every key
 // token to the query token over the input row, thickness and brightness set by the weight.
 function AttentionArcs({ podPos, query, weights }) {
@@ -264,7 +293,7 @@ function Frame({ height, nonce, cx = 0, width = ROOM_W, focus }) {
 
 // rooms: [{name, op, dims, layout, isOutput, label}]; values: {name: Float32Array without batch}
 // sae: {room, F, featNow: Float32Array(F), scale} or null
-export default function LabScene({ rooms, values, scales, inputPixels, inputChannels, classes, pred, selected, onSelect, onHover, sae, frameNonce, focusRoom, edges }) {
+export default function LabScene({ rooms, values, scales, inputPixels, inputChannels, classes, pred, selected, onSelect, onHover, sae, frameNonce, focusRoom, edges, trace }) {
   const geos = useMemo(() => rooms.map((r, i) => roomGeometry(r, i === 0)), [rooms]);
   const ys = rooms.map((_, i) => i * GAP);
   const height = (rooms.length - 1) * GAP;
@@ -328,6 +357,9 @@ export default function LabScene({ rooms, values, scales, inputPixels, inputChan
         </group>
       )}
       {marker && <Marker {...marker} />}
+      {trace && trace.length > 1 && (
+        <TracePath points={trace.map((t) => { const k = rooms.findIndex((r) => r.name === t.room); return k < 0 ? null : unitPosition(geos[k], rooms[k].isInputRoom && rooms[k].layout.kind === 'spatial' ? t.index % rooms[k].layout.P : t.index, ys[k]); }).filter(Boolean)} />
+      )}
       {marker && edges && (() => {
         // incoming edges: from the feeding units (or channel tiles) of the room below to the selection
         const k = rooms.findIndex((r) => r.name === edges.fromRoom);
