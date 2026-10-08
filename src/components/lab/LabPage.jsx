@@ -492,9 +492,10 @@ export default function LabPage() {
                 </span>
                 {kind?.kind === 'image' && <Thumb pixels={pinned.pixels} kind={kind} size={28} />}
                 <Btn onClick={() => setPinned(null)}>unpin</Btn>
+                {outKind === 'classes' && <PatchPanel model={model} rooms={sceneRooms.slice(1)} pinned={pinned} xNow={xFinal} classes={classes} />}
               </>
             ) : (
-              <Btn onClick={() => setPinned({ outs, pixels: shownPixels })} title="freeze this input, then change the input to compare">Pin this input to compare</Btn>
+              <Btn onClick={() => setPinned({ outs, pixels: shownPixels, x: xFinal })} title="freeze this input, then change the input to compare">Pin this input to compare</Btn>
             )}
           </div>
         )}
@@ -509,7 +510,7 @@ export default function LabPage() {
       <aside ref={rightPanel} className="scroll-thin order-3 w-full shrink-0 space-y-3 border-line p-4 lg:w-[23rem] lg:overflow-y-auto lg:border-l">
         <Boundary key={selected ? `${selected.room}:${selected.index}:${!!selected.sae}` : 'none'}>
           <UnitCard
-            model={model} sel={selected} outs={outs} baseOuts={baseOuts} rooms={sceneRooms} onPick={onSelect} norm={norm} explFor={explFor} pixelsNow={shownPixels} rawNow={useItem && !!ds?.raw} outKind={outKind} store={store} ds={ds} kind={kind} sae={sae} saeNow={saeNow}
+            model={model} sel={selected} outs={outs} baseOuts={baseOuts} rooms={sceneRooms} onPick={onSelect} norm={norm} explFor={explFor} pixelsNow={shownPixels} rawNow={useItem && !!ds?.raw} outKind={outKind} pinnedNow={pinned} xNow={xFinal} store={store} ds={ds} kind={kind} sae={sae} saeNow={saeNow}
             steer={steer} setSteer={setSteer} classes={classes} onClose={() => setSelected(null)} setItem={setItem}
             onPickFeature={(f) => setSelected({ room: sae.room, index: f, sae: true })}
           />
@@ -832,7 +833,7 @@ function UnitPicker({ model, rooms, onPick }) {
   );
 }
 
-function UnitBody({ model, sel, outs, baseOuts, store, ds, kind, norm, sae, saeNow, steer, setSteer, classes, onClose, setItem, onPickFeature, explFor, pixelsNow, rawNow, outKind }) {
+function UnitBody({ model, sel, outs, baseOuts, store, ds, kind, norm, sae, saeNow, steer, setSteer, classes, onClose, setItem, onPickFeature, explFor, pixelsNow, rawNow, outKind, pinnedNow, xNow }) {
   const r = model.describe(sel.room);
   const L = r.layout;
   const isFeat = !!sel.sae;
@@ -935,6 +936,7 @@ function UnitBody({ model, sel, outs, baseOuts, store, ds, kind, norm, sae, saeN
         <OcclusionView model={model} kind={kind} norm={norm} pixels={pixelsNow} label="this channel"
           target={readChannelMax(sel.room, L, c)} deps={[pixelsNow, sel.room, c]} raw={rawNow} />
       )}
+      {!isFeat && pinnedNow && <ChannelPatch model={model} room={sel.room} L={L} c={c} pinned={pinnedNow} xNow={xNow} classes={classes} />}
       {!isFeat && <Weights model={model} room={sel.room} c={c} />}
       {!isFeat && kind.kind === 'tokens' && r.op === 'Softmax' && L.kind === 'spatial' && L.H === kind.T && (
         <div className="rounded-md border border-line p-2 text-[11px] text-slate-300">
@@ -1689,6 +1691,82 @@ function LabReport({ store, rooms, summaries, sae, onPick }) {
       <p className="mt-3 text-[10px] text-dim">
         Label purity is the share of a unit's 12 strongest items that carry its most common label; it needs labels and at least 12 active items. It is a rough stand-in for a unit meaning one thing.
       </p>
+    </div>
+  );
+}
+
+// Activation patching: run the current input, but copy one room's activations from the pinned
+// input. If the answer follows the pinned input, that room carries what decides it (Meng et al.
+// 2022; see Heimersheim and Nanda 2024 for how to read patching results).
+function PatchPanel({ model, rooms, pinned, xNow, classes }) {
+  const [res, setRes] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const argmax = (a) => Array.from(a).indexOf(Math.max(...a));
+  const name = (k) => classes?.[k] ?? k;
+  const run = async () => {
+    setBusy(true);
+    const pinnedPred = argmax(pinned.outs[model.outputName].data);
+    const base = await model.run([xNow]);
+    const nowPred = argmax(base[model.outputName].data);
+    const rows = [];
+    for (const r of rooms) {
+      if (r.isOutput || !pinned.outs[r.name]) continue;
+      const src = pinned.outs[r.name].data;
+      const o = await model.runWith(xNow, r.name, () => Float32Array.from(src));
+      const p = maybeSoftmax(o[model.outputName].data);
+      rows.push({ label: r.label, pred: p.indexOf(Math.max(...p)), pPinned: p[pinnedPred] });
+    }
+    setRes({ pinnedPred, nowPred, rows });
+    setBusy(false);
+  };
+  return (
+    <div className="relative">
+      <Btn onClick={run} disabled={busy}>{busy ? 'Patching...' : 'Patch layers from the pinned input'}</Btn>
+      {res && (
+        <div className="absolute bottom-8 left-0 w-80 rounded-md border border-line bg-panel p-2 text-[11px] text-slate-300 shadow-xl">
+          <div className="mb-1">
+            Current answer <span className="text-glow">{name(res.nowPred)}</span>, pinned answer <span className="text-warm">{name(res.pinnedPred)}</span>. Copying one layer from the pinned input gives:
+          </div>
+          {res.rows.map((r) => (
+            <div key={r.label} className="flex items-center gap-2">
+              <span className="w-28 truncate text-dim">{r.label}</span>
+              <div className="h-1.5 flex-1 overflow-hidden rounded bg-line"><div className="h-full bg-warm" style={{ width: `${r.pPinned * 100}%` }} /></div>
+              <span className={`w-16 text-right ${r.pred === res.pinnedPred ? 'text-warm' : 'text-slate-300'}`}>{name(r.pred)} {(r.pPinned * 100).toFixed(0)}%</span>
+            </div>
+          ))}
+          <div className="mt-1 text-[10px] text-dim">
+            Bars: probability of the pinned answer after patching that layer. Without skip connections every later layer is computed from the patched one, so a whole-layer patch hands over the answer by construction; with skip connections it need not. To find which units carry the answer, patch single channels from their rooms.<Cite id="meng2022" /><Cite id="heimersheim2024" />
+          </div>
+          <button className="mt-1 text-[10px] text-dim underline" onClick={() => setRes(null)}>close</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Patch only this channel (every position) from the pinned input into the current one.
+function ChannelPatch({ model, room, L, c, pinned, xNow, classes }) {
+  const [res, setRes] = useState(null);
+  const argmax = (a) => Array.from(a).indexOf(Math.max(...a));
+  const name = (k) => classes?.[k] ?? k;
+  const run = async () => {
+    const src = pinned.outs[room]?.data;
+    if (!src) return;
+    const base = maybeSoftmax((await model.run([xNow]))[model.outputName].data);
+    const o = await model.runWith(xNow, room, (d) => { const out = Float32Array.from(d); for (let p = 0; p < L.P; p++) out[L.idx(c, p)] = src[L.idx(c, p)]; return out; });
+    const p = maybeSoftmax(o[model.outputName].data);
+    const k = argmax(pinned.outs[model.outputName].data);
+    setRes({ before: base[k], after: p[k], pred: argmax(p), k });
+  };
+  return (
+    <div className="rounded-md border border-line p-2 text-[11px] text-slate-300">
+      <Btn onClick={run}>Patch this channel from the pinned input</Btn>
+      {res && (
+        <div className="mt-1">
+          Probability of the pinned answer {name(res.k)}: {(100 * res.before).toFixed(1)}% before, {(100 * res.after).toFixed(1)}% with this channel copied over; the answer is now {name(res.pred)}.
+          <Cite id="heimersheim2024" />
+        </div>
+      )}
     </div>
   );
 }

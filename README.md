@@ -42,6 +42,11 @@ Drawn input goes through the optdigits recipe: fit the ink into a 32x32 bitmap, 
 | `scripts/find_presets.mjs` | `src/data/presets.json` | ~10 s |
 | `scripts/explain.py` | `src/data/explanations.json` | about 166 API calls |
 | `scripts/measure_purity.py` | prints the neuron vs feature comparison | seconds |
+| `scripts/build_examples.py` | Lab examples: MNIST CNN and MLP, the Tour's CNN as ONNX, sample datasets | ~7 min |
+| `scripts/build_paren_example.py` | Lab example: parentheses transformer + token dataset | ~10 min |
+| `scripts/build_cifar_example.py` | Lab example: CIFAR-10 RGB CNN + 1000 test images | longer (downloads CIFAR) |
+| `scripts/explain_lab.py` | written explanations for any ONNX model, for the Lab | 2 API calls per unit |
+| `npm test` | parity, graph surgery vs onnx Python, fixtures, tokens, utilities, SAE trainer | ~1 min |
 
 `explain.py` follows Bills et al. 2023, adapted to images:
 1. Claude (`claude-opus-5-5`) writes one sentence per unit from its top 12 digits, using the even-indexed held-out half.
@@ -106,6 +111,7 @@ What you get for any model:
 - **Report**: per layer, how many units never fire, how many always fire, median label purity and the most label-specific units. In the MNIST CNN, 19 of the 64 units in the last hidden layer never fire on the 1000 test items.
 - **Save image** downloads the current 3D view as a PNG.
 - **Pin and compare.** Freeze one input; every room then shows this input minus the pinned one, so you can see where a 3 and an 8 part ways inside the network.
+- **Activation patching** (Meng et al. 2022; Heimersheim and Nanda 2024). With an input pinned, copy one layer, or one channel from its room, from the pinned input into the current one and see whether the answer follows. The panel says plainly that in a model without skip connections a whole-layer patch hands over the answer by construction, so single channels are the informative test.
 - **Occlusion maps** for the answer or any channel (Zeiler and Fergus 2014): forward-only "where does it look".
 - **Sessions.** Save the rooms, settings, SAE and explanations to a JSON file and open them later. Example and URL models reload themselves.
 - Drop a model anywhere on the page, pick units by number, and use the fly-to list to move through deep models. ResNet-18 (49 ops) and MobileNetV2 (170 ops) load and run.

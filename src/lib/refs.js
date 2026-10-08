@@ -120,6 +120,16 @@ export const REFS = {
     full: 'L. Schubert, M. Petrov, S. Carter, N. Cammarata, G. Goh, C. Olah. OpenAI Microscope. 2020. A gallery of every unit of several vision models.',
     url: 'https://openai.com/index/microscope/',
   },
+  meng2022: {
+    short: 'Meng et al. 2022',
+    full: 'K. Meng, D. Bau, A. Andonian, Y. Belinkov. Locating and Editing Factual Associations in GPT. NeurIPS, 2022. (causal tracing by restoring activations)',
+    url: 'https://arxiv.org/abs/2202.05262',
+  },
+  heimersheim2024: {
+    short: 'Heimersheim & Nanda 2024',
+    full: 'S. Heimersheim, N. Nanda. How to use and interpret activation patching. arXiv:2404.15255, 2024.',
+    url: 'https://arxiv.org/abs/2404.15255',
+  },
   alain2016: {
     short: 'Alain & Bengio 2016',
     full: 'G. Alain, Y. Bengio. Understanding intermediate layers using linear classifier probes. arXiv:1610.01644, 2016.',
