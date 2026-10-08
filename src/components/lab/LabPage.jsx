@@ -282,13 +282,47 @@ export default function LabPage() {
   useEffect(() => { if (selected) rightPanel.current?.scrollTo({ top: 0, behavior: 'smooth' }); }, [selected]);
   const onHover = useCallback((h) => setHover(h), []);
 
+  // drop a model anywhere on the page
+  const [dragAll, setDragAll] = useState(false);
+  useEffect(() => {
+    const over = (e) => { if ([...(e.dataTransfer?.items ?? [])].some((i) => i.kind === 'file')) { e.preventDefault(); setDragAll(true); } };
+    const leave = (e) => { if (!e.relatedTarget) setDragAll(false); };
+    const drop = (e) => {
+      const files = [...(e.dataTransfer?.files ?? [])];
+      setDragAll(false);
+      if (!files.length) return;
+      e.preventDefault();
+      if (files.some((f) => f.name.endsWith('.onnx'))) onFiles(files);
+      else onDatasetFiles(files, false);
+    };
+    window.addEventListener('dragover', over);
+    window.addEventListener('dragleave', leave);
+    window.addEventListener('drop', drop);
+    return () => { window.removeEventListener('dragover', over); window.removeEventListener('dragleave', leave); window.removeEventListener('drop', drop); };
+  }); // re-bind each render so the handlers see the current model
+
   // ---------- render ----------
   return (
-    <main className="flex min-h-0 flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-hidden">
+    <main className="relative flex min-h-0 flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-hidden">
+      {dragAll && (
+        <div className="pointer-events-none absolute inset-0 z-50 flex items-center justify-center border-2 border-dashed border-glow bg-black/60 text-sm text-glow">
+          Drop an .onnx model (with an optional .meta.json), or images / .npy / .json as a dataset
+        </div>
+      )}
       <aside className="scroll-thin order-2 w-full shrink-0 space-y-3 border-line p-4 lg:order-1 lg:w-80 lg:overflow-y-auto lg:border-r">
         <div>
           <p className="text-xs uppercase tracking-[0.2em] text-dim">Lab · your model</p>
           <p className="mt-2 text-sm leading-relaxed text-slate-100">Load any ONNX model and walk through its layers, then train a sparse autoencoder on one of them, right here in the browser.</p>
+          <details className="mt-2 rounded-md border border-line px-2 py-1 text-xs text-slate-300">
+            <summary className="cursor-pointer text-dim hover:text-slate-200">How to read the Lab</summary>
+            <ol className="mt-1 list-decimal space-y-1 pl-4 leading-snug">
+              <li>Each floor of the tower is one layer. Brightness is how strongly each unit fires on the current input.</li>
+              <li>Click a unit, search for one, or pick it by number. Its room shows what it fires on across the dataset, its weights, and a clamp.</li>
+              <li>"What does it control?" clamps the unit on many items and counts how the answer moves. That is evidence of cause, not just correlation.</li>
+              <li>Train a sparse autoencoder on a layer to split it into features that are often easier to name. They dock beside the layer.</li>
+              <li>The latent view places every dataset item by how a layer represents it.</li>
+            </ol>
+          </details>
         </div>
         <ModelCard model={model} meta={meta} onFiles={onFiles} onExample={loadExample} onUrl={loadUrl} status={status} error={error} clearError={() => setError('')} />
         {model && kind && (
@@ -735,6 +769,12 @@ function UnitBody({ model, sel, outs, baseOuts, store, ds, kind, norm, sae, saeN
       )}
 
       {!isFeat && <Weights model={model} room={sel.room} c={c} />}
+      {!isFeat && kind.kind === 'tokens' && r.op === 'Softmax' && L.kind === 'spatial' && L.H === kind.T && (
+        <div className="rounded-md border border-line p-2 text-[11px] text-slate-300">
+          Attention: head {c}, query token {Math.floor(p / L.W)} attends to key token {p % L.W} with weight {valueNow.toFixed(3)}.
+          The arcs over the input row show this query's weights to every key.
+        </div>
+      )}
       {!isFeat && sae && sae.room === sel.room && <WrittenBy sae={sae} c={c} onPick={(f) => onPickFeature?.(f)} />}
       <div className="space-y-1.5 rounded-md border border-line p-2">
         <div className="flex items-center justify-between text-xs">

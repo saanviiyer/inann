@@ -179,6 +179,37 @@ function Marker({ pos, size = 0.25 }) {
 }
 
 // Frame the whole tower, or (focus) one room. Tall towers open on their first few rooms.
+// Attention arcs: for a selected cell of a [heads, query, key] attention map, arcs from every key
+// token to the query token over the input row, thickness and brightness set by the weight.
+function AttentionArcs({ podPos, query, weights }) {
+  const geo = useMemo(() => {
+    const pos = [], col = [];
+    const m = Math.max(...weights, 1e-9);
+    const q = podPos(query);
+    weights.forEach((w, k) => {
+      if (w < 0.02 * m) return;
+      const a = podPos(k);
+      const h = 0.6 + 0.12 * Math.abs(k - query);
+      const curve = new THREE.QuadraticBezierCurve3(new THREE.Vector3(a[0], a[1] + 0.3, a[2]), new THREE.Vector3((a[0] + q[0]) / 2, a[1] + 0.3 + h, a[2]), new THREE.Vector3(q[0], q[1] + 0.3, q[2]));
+      const pts = curve.getPoints(16);
+      const t = w / m;
+      for (let i = 0; i < pts.length - 1; i++) {
+        pos.push(pts[i].x, pts[i].y, pts[i].z, pts[i + 1].x, pts[i + 1].y, pts[i + 1].z);
+        col.push(t, 0.71 * t, 0.28 * t, t, 0.71 * t, 0.28 * t);
+      }
+    });
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+    return g;
+  }, [podPos, query, weights]);
+  return (
+    <lineSegments geometry={geo}>
+      <lineBasicMaterial vertexColors transparent blending={THREE.AdditiveBlending} depthWrite={false} toneMapped={false} />
+    </lineSegments>
+  );
+}
+
 // lines from an SAE feature to the channels its decoder writes most; orange adds, blue subtracts
 function Beams({ from, targets }) {
   const geo = useMemo(() => {
@@ -291,6 +322,17 @@ export default function LabScene({ rooms, values, scales, inputPixels, inputChan
         </group>
       )}
       {marker && <Marker {...marker} />}
+      {(() => {
+        // attention arcs when a cell of a [heads, T, T] map is selected and the input is a token row
+        if (!selected || selected.sae || !rooms[0]?.isTokens) return null;
+        const k = rooms.findIndex((r) => r.name === selected.room);
+        const r = rooms[k];
+        const T = rooms[0].layout.size;
+        if (!r || r.layout.kind !== 'spatial' || r.layout.H !== T || r.layout.W !== T || !values[r.name]) return null;
+        const head = Math.floor(selected.index / (T * T)), q = Math.floor((selected.index % (T * T)) / T);
+        const row = Array.from(values[r.name].subarray(head * T * T + q * T, head * T * T + (q + 1) * T));
+        return <AttentionArcs podPos={(i) => unitPosition(geos[0], i, ys[0])} query={q} weights={row} />;
+      })()}
       {selected?.sae && sae?.links && saeIdx >= 0 && (
         <Beams
           from={(() => { const p = spherePos(saeGeo, selected.index, ys[saeIdx]); return [p[0] + saeX, p[1], p[2]]; })()}
