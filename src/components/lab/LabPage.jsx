@@ -27,6 +27,7 @@ export const EXAMPLES = [
   { file: 'mnist_mlp', label: 'MNIST MLP' },
   { file: 'optdigits_cnn', label: 'Tour 8x8 CNN' },
   { file: 'paren_transformer', label: 'Paren transformer' },
+  { file: 'cifar_cnn', label: 'CIFAR-10 CNN (colour)' },
 ];
 
 const unitOf = (L, i) => (L.kind === 'spatial' ? { c: Math.floor(i / L.P), p: i % L.P } : L.kind === 'seq' ? { c: i % L.C, p: Math.floor(i / L.C) } : { c: i, p: 0 });

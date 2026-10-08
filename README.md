@@ -89,7 +89,7 @@ src/components/Scene.jsx   react-three-fiber space
 
 ## Lab: bring your own model
 
-Open the app, switch the header to **Lab: your model** (or go to `/#lab`), and drop in an `.onnx` file. It runs on your machine with ONNX Runtime Web, and the file never leaves the browser. Four example models are one click away: an MNIST CNN, an MNIST MLP, the Tour's 8x8 CNN, and a parentheses transformer.
+Open the app, switch the header to **Lab: your model** (or go to `/#lab`), and drop in an `.onnx` file. It runs on your machine with ONNX Runtime Web, and the file never leaves the browser. Five example models are one click away: an MNIST CNN, an MNIST MLP, the Tour's 8x8 CNN, a parentheses transformer, and a colour CIFAR-10 CNN (67.6% test accuracy; in its last hidden layer, channel 8's 12 strongest images are all horses).
 
 What you get for any model:
 - **Rooms in 3D**, one per chosen tensor.

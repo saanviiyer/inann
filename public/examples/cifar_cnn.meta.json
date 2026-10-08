@@ -1,0 +1,23 @@
+{
+ "name": "CIFAR-10 CNN",
+ "description": "Small RGB CNN trained here on CIFAR-10 for 6 epochs (seed 0), 67.6% test accuracy.",
+ "input": {
+  "kind": "image",
+  "norm": "unit",
+  "preprocess": "stretch"
+ },
+ "classes": [
+  "airplane",
+  "car",
+  "bird",
+  "cat",
+  "deer",
+  "dog",
+  "frog",
+  "horse",
+  "ship",
+  "truck"
+ ],
+ "dataset": "cifar_test_1000.json",
+ "test_acc": 0.676
+}

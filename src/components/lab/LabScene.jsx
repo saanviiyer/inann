@@ -23,7 +23,8 @@ export function roomGeometry(room, isFirst) {
   // atlas
   let tiles, tH, tW, idx, inv;
   if (L.kind === 'spatial') {
-    tiles = L.C; tH = L.H; tW = L.W;
+    // the input picture is one colour tile, not one tile per colour channel
+    tiles = room.isInputRoom ? 1 : L.C; tH = L.H; tW = L.W;
     idx = (t, y, x) => t * L.H * L.W + y * L.W + x;
     inv = (i) => { const p = i % (L.H * L.W); return [Math.floor(i / (L.H * L.W)), Math.floor(p / L.W), p % L.W]; };
   } else if (L.kind === 'seq') {
