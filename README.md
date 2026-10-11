@@ -2,6 +2,8 @@
 
 **in a neural network.** Walk through a model's insides in 3D instead of treating it as a black box. Everything runs in the browser; there is no backend.
 
+**Live: https://saanviiyer.github.io/inann/** (the Lab is at https://saanviiyer.github.io/inann/#lab)
+
 - **Tour** (`/`): eight short chapters on a tiny trained digit network. They cover what neurons see, how to break the network, feature rooms with search, steering, sparse-autoencoder features and latent space. Every number on the page is computed from the bundled model.
 - **Lab** (`/#lab`): drop in **your own ONNX model** and get the same tools for it. Its layers become rooms in 3D, and every unit gets a room with its dataset statistics and weights. You can clamp units and run causal tests, train a sparse autoencoder on any layer in the browser and watch its features dock beside the layer, and use activation patching, occlusion maps, a gallery, a report and the latent space. It handles CNNs, MLPs, ResNets, MobileNets and transformers, including Hugging Face exports.
 
