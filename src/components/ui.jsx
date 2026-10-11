@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { GLOSSARY } from '../lib/glossary.js';
 import { REFS, REF_ORDER } from '../lib/refs.js';
+import { getTheme, useTheme } from '../lib/theme.js';
 
 // Hover (or focus) a term to get its one-sentence definition.
 export function Term({ k, children }) {
@@ -63,9 +64,15 @@ export function Kbd({ children }) {
 }
 
 // Colormaps. All return [r,g,b] 0..255.
+// In the light theme, grayscale pictures read as dark ink on paper and the diverging map fades to
+// paper at zero; the underlying numbers are unchanged.
+const PAPER = [251, 247, 239], INK = [43, 36, 27];
+const mix = (a, b, t) => a.map((x, i) => Math.round(x + (b[i] - x) * t));
 export const cmap = {
   gray: (v) => {
-    const c = Math.round(255 * Math.min(1, Math.max(0, v)));
+    v = Math.min(1, Math.max(0, v));
+    if (getTheme() === 'light') return mix(PAPER, INK, v);
+    const c = Math.round(255 * v);
     return [c, c, c];
   },
   glow: (v) => {
@@ -79,6 +86,7 @@ export const cmap = {
   // v in -1..1
   diverging: (v) => {
     v = Math.max(-1, Math.min(1, v));
+    if (getTheme() === 'light') return v >= 0 ? mix([239, 231, 216], [180, 95, 14], v) : mix([239, 231, 216], [47, 95, 191], -v);
     return v >= 0
       ? [Math.round(18 + 237 * v), Math.round(22 + 159 * v), Math.round(32 + 39 * v)]
       : [Math.round(18 + 73 * -v), Math.round(22 + 118 * -v), Math.round(32 + 223 * -v)];
@@ -89,6 +97,7 @@ export const cmap = {
 // overlay: optional array of 0/1 mask drawn as an amber outline region. onPaint(i, event) for drawing.
 export function PixelGrid({ values, w = 8, h = 8, size = 128, map = 'gray', overlay, alpha, onPaint, title, className = '' }) {
   const ref = useRef(null);
+  const theme = useTheme();
   const [drag, setDrag] = useState(false);
   useEffect(() => {
     const cv = ref.current;
@@ -100,7 +109,7 @@ export function PixelGrid({ values, w = 8, h = 8, size = 128, map = 'gray', over
       img.data[i * 4 + 3] = 255;
     }
     ctx.putImageData(img, 0, 0);
-  }, [values, w, h, map]);
+  }, [values, w, h, map, theme]);
   const cell = (e) => {
     const r = e.currentTarget.getBoundingClientRect();
     const x = Math.floor(((e.clientX - r.left) / r.width) * w);
@@ -179,10 +188,11 @@ export function AboutBlurb({ compact }) {
         <span className="tracking-[0.2em] text-glow">INANN</span>: in a neural network!
       </h1>
       <p className="text-sm leading-relaxed text-slate-300">
-        I started inann after I learned the Perceptron Learning Algorithm (PLA) in my Learning Systems class. I could watch a perceptron learn. Each mistake
-        nudges one line, and I could see every nudge. Real networks make the same kind of update across thousands of weights, and the steps disappear from
-        view. Interpretability research brings those steps back into view, and I want to do that work. With inann you can walk through a trained network, see
-        what each unit responds to, test what it causes, and split a layer into readable features, on a small model or on your own.
+        inann was inspired by my Learning Systems (CS156) class, where I learned about the Perceptron Learning Algorithm (PLA) and wanted to build a
+        visualization to watch a perceptron learn. Each mistake nudges one line, and I could see every nudge. Real networks make the same kind of update
+        across thousands of weights, and the steps disappear from view. Interpretability research brings those steps back into view, and I'm interested in
+        breaking down black-box neural networks and understanding what a model has understood. With inann, you can walk through a trained network, see what
+        each unit responds to, test what it causes, and split a layer into readable features on a small model or on your own. Happy interpreting!
       </p>
     </div>
   );

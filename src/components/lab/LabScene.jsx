@@ -81,7 +81,9 @@ function AtlasRoom({ geo, data, scale, signed, y, onPick, onHover, inputPixels, 
   }, [geo]);
   useEffect(() => {
     const d = tex.image.data;
-    d.fill(8);
+    // gaps between tiles take the background colour
+    const bgc = new THREE.Color(sceneHex().bg);
+    for (let j = 0; j < d.length; j += 4) { d[j] = bgc.r * 255; d[j + 1] = bgc.g * 255; d[j + 2] = bgc.b * 255; d[j + 3] = 255; }
     const col = new THREE.Color();
     for (let t = 0; t < geo.tiles; t++) {
       const ox = (t % geo.cols) * (geo.tW + geo.pad), oy = Math.floor(t / geo.cols) * (geo.tH + geo.pad);
@@ -94,7 +96,9 @@ function AtlasRoom({ geo, data, scale, signed, y, onPick, onHover, inputPixels, 
             // the input room shows the picture itself (RGB when it has 3 channels)
             const p = yy * geo.tW + x, HW = geo.tH * geo.tW;
             const v = (c) => Math.min(1, Math.max(0, inputPixels[c * HW + p] ?? 0));
-            [r, g, b] = inputChannels === 3 ? [v(0), v(1), v(2)] : [v(0), v(0), v(0)];
+            // one-channel pictures read as dark ink on paper in the light theme
+            const ink = (t) => (getTheme() === 'light' ? [0.984 - 0.815 * t, 0.969 - 0.827 * t, 0.937 - 0.831 * t] : [t, t, t]);
+            [r, g, b] = inputChannels === 3 ? [v(0), v(1), v(2)] : ink(v(0));
           } else {
             colorFor(data ? data[i] : 0, scale, signed, col);
             [r, g, b] = [col.r, col.g, col.b];

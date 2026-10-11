@@ -1,10 +1,12 @@
 // Small building blocks for the Lab panels.
 import React, { useEffect, useRef } from 'react';
+import { useTheme, sceneHex } from '../../lib/theme.js';
 
 // A thumbnail of one input in display form (C,H,W in 0..1), with an optional amber box marking
 // where a unit fired (box in input pixel coordinates).
 export function Thumb({ pixels, kind, size = 44, box, title }) {
   const ref = useRef(null);
+  const theme = useTheme();
   const C = kind?.C ?? 1, H = kind?.H ?? 1, W = kind?.W ?? pixels?.length ?? 1;
   useEffect(() => {
     if (!pixels) return;
@@ -12,14 +14,16 @@ export function Thumb({ pixels, kind, size = 44, box, title }) {
     const img = ctx.createImageData(W, H);
     for (let p = 0; p < H * W; p++) {
       const v = (c) => Math.round(255 * Math.min(1, Math.max(0, pixels[c * H * W + p] ?? 0)));
-      const [r, g, b] = C === 3 ? [v(0), v(1), v(2)] : [v(0), v(0), v(0)];
+      // one-channel pictures read as dark ink on paper in the light theme
+      const ink = (t) => (theme === 'light' ? [251 - (208 * t) / 255, 247 - (211 * t) / 255, 239 - (212 * t) / 255].map(Math.round) : [t, t, t]);
+      const [r, g, b] = C === 3 ? [v(0), v(1), v(2)] : ink(v(0));
       img.data.set([r, g, b, 255], p * 4);
     }
     ctx.putImageData(img, 0, 0);
-  }, [pixels, C, H, W]);
+  }, [pixels, C, H, W, theme]);
   return (
     <div className="relative" style={{ width: size, height: (size * H) / W }} title={title}>
-      <canvas ref={ref} width={W} height={H} className="pix h-full w-full rounded-sm bg-black" />
+      <canvas ref={ref} width={W} height={H} className="pix h-full w-full rounded-sm bg-panel" />
       {box && (
         <div
           className="pointer-events-none absolute border border-warm"
@@ -80,7 +84,7 @@ export function Curve({ points, height = 70, label }) {
   useEffect(() => {
     const cv = ref.current, ctx = cv.getContext('2d'), W = cv.width, H = cv.height;
     ctx.clearRect(0, 0, W, H);
-    ctx.strokeStyle = '#1c2436';
+    ctx.strokeStyle = sceneHex().axis;
     ctx.strokeRect(0.5, 0.5, W - 1, H - 1);
     if (points.length < 2) return;
     const xs = points.map((p) => p[0]), ys = points.map((p) => p[1]);
