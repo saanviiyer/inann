@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Term, Cite, Btn, Kbd } from './ui.jsx';
+import { Term, Cite, Btn, Kbd, AboutBlurb } from './ui.jsx';
+import { sceneHex } from '../lib/theme.js';
 
 // A seeded, linearly separable 2D dataset.
 function makeData(seed = 7) {
@@ -75,7 +76,7 @@ export default function Prologue({ paused, onNext }) {
       ctx.drawImage(off, 0, 0, W, H);
 
       // boundary: w0 x + w1 y + b = 0
-      ctx.strokeStyle = '#e6ebf5'; ctx.lineWidth = 2;
+      ctx.strokeStyle = sceneHex().ink; ctx.lineWidth = 2;
       ctx.beginPath();
       if (Math.abs(s.w[1]) > 1e-6) {
         ctx.moveTo(X(-R), Y((-s.b - s.w[0] * -R) / s.w[1]));
@@ -86,7 +87,7 @@ export default function Prologue({ paused, onNext }) {
       ctx.stroke();
 
       for (const p of data) {
-        ctx.fillStyle = p.label > 0 ? '#ffb547' : '#5b8cff';
+        ctx.fillStyle = p.label > 0 ? sceneHex().accent : sceneHex().cool;
         ctx.beginPath(); ctx.arc(X(p.x), Y(p.y), 5, 0, 7); ctx.fill();
       }
       if (s.last) {
@@ -98,7 +99,7 @@ export default function Prologue({ paused, onNext }) {
       // weight vector arrow from the origin
       const n = Math.hypot(s.w[0], s.w[1]) || 1, L = 0.75;
       const ex = (s.w[0] / n) * L, ey = (s.w[1] / n) * L;
-      ctx.strokeStyle = '#7ee7ff'; ctx.fillStyle = '#7ee7ff'; ctx.lineWidth = 3;
+      ctx.strokeStyle = sceneHex().glowText; ctx.fillStyle = sceneHex().glowText; ctx.lineWidth = 3;
       ctx.beginPath(); ctx.moveTo(X(0), Y(0)); ctx.lineTo(X(ex), Y(ey)); ctx.stroke();
       const a = Math.atan2(-(ey), ex);
       ctx.beginPath();
@@ -114,8 +115,10 @@ export default function Prologue({ paused, onNext }) {
   }, [data, paused, run]);
 
   return (
-    <div className="mx-auto flex min-h-full max-w-5xl flex-col items-center justify-start lg:justify-center gap-6 px-4 py-6 lg:flex-row lg:gap-10">
-      <canvas ref={canvas} width={440} height={440} className="aspect-square w-full max-w-[440px] rounded-lg border border-line bg-[#070a12]" />
+    <div className="mx-auto flex min-h-full max-w-5xl flex-col justify-start gap-6 px-4 py-6 lg:justify-center">
+    <AboutBlurb />
+    <div className="flex flex-col items-center gap-6 lg:flex-row lg:gap-10">
+      <canvas ref={canvas} width={440} height={440} className="aspect-square w-full max-w-[440px] rounded-lg border border-line bg-[var(--pad)]" />
       <div className="max-w-md space-y-4 text-sm leading-relaxed text-slate-300">
         <p className="text-xs uppercase tracking-[0.2em] text-dim">Chapter 1 · Why this exists</p>
         <p className="text-base text-slate-100">
@@ -139,6 +142,7 @@ export default function Prologue({ paused, onNext }) {
         <p className="pt-2 text-slate-100">Now let's go inside a bigger one.</p>
         <Btn on onClick={onNext} className="px-4 py-2 text-sm">Enter the network</Btn>
       </div>
+    </div>
     </div>
   );
 }

@@ -2,8 +2,9 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { PixelGrid, Term, Cite, NotShown, Btn } from './ui.jsx';
 import Inspector from './Inspector.jsx';
 import { roomOf, roomName, roomActOf, roomActivations, EXPLAINED } from '../lib/model.js';
-import { topExamples, histogram, explanationOf, scoreBand } from '../lib/rooms.js';
+import { topExamples, histogram, explanationOf, scoreBand, measuredSummary } from '../lib/rooms.js';
 import { toDigit, textToDigit } from '../lib/digitize.js';
+import { sceneHex } from '../lib/theme.js';
 
 export function ScoreBadge({ ex }) {
   const b = scoreBand(ex.score);
@@ -30,9 +31,20 @@ export function Explanation({ room, compact }) {
         </div>
       </div>
     );
-  if (!EXPLAINED) return <NotShown>A written explanation. Explanations have not been generated yet (scripts/explain.py).</NotShown>;
   if (room.layer === 'out') return <p className="text-xs text-slate-300">By definition, this pod's score is the network's vote for digit {room.index}.</p>;
-  return <NotShown>A written explanation. This unit is active on too few held-out digits to explain or score fairly.</NotShown>;
+  // no written sentence: describe the unit from what it measurably does on the held-out digits
+  return (
+    <div className="space-y-1">
+      <p className={`${compact ? 'text-xs' : 'text-sm'} leading-snug text-slate-100`}>{measuredSummary(room)}.</p>
+      {!compact && (
+        <span className="text-[10px] text-dim">
+          Measured from the 450 held-out digits.{' '}
+          {EXPLAINED ? 'This unit is active on too few digits for a written, scored explanation.' : 'A written, simulation-scored sentence appears here once scripts/explain.py has run with an API key.'}
+          <Cite id="bills2023" />
+        </span>
+      )}
+    </div>
+  );
 }
 
 function Histogram({ room, current }) {
@@ -88,8 +100,8 @@ function TestPad({ setX }) {
         ref={cv}
         width={200}
         height={200}
-        className="h-[96px] w-[96px] touch-none cursor-crosshair rounded border border-line bg-[#070a12]"
-        onPointerDown={(e) => { drawing.current = true; last.current = pos(e); e.currentTarget.setPointerCapture(e.pointerId); }}
+        className="h-[96px] w-[96px] touch-none cursor-crosshair rounded border border-line bg-[var(--pad)]"
+        onPointerDown={(e) => { drawing.current = true; last.current = pos(e); e.currentTarget.getContext('2d').strokeStyle = sceneHex().ink; e.currentTarget.setPointerCapture(e.pointerId); }}
         onPointerMove={(e) => {
           if (!drawing.current) return;
           const p = pos(e), ctx = cv.current.getContext('2d');

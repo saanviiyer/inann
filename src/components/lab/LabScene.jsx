@@ -7,6 +7,7 @@ import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls, Html } from '@react-three/drei';
 import * as THREE from 'three';
 import { cmap } from '../ui.jsx';
+import { PAL, useTheme, getTheme, sceneHex, lineBlending } from '../../lib/theme.js';
 
 const GAP = 3.2;
 const ROOM_W = 6.5;
@@ -59,7 +60,8 @@ function spherePos(geo, i, y) {
   return [r * Math.cos(t), y + 0.12 * Math.sin(i * 1.3), r * Math.sin(t)];
 }
 
-const BASE = new THREE.Color('#121a2b'), GLOW = new THREE.Color('#8af0ff'), HOT = new THREE.Color('#ffffff'), WIN = new THREE.Color('#ffd27a');
+// theme-aware colors, shared and updated in place when the theme changes
+const BASE = PAL.base, GLOW = PAL.glow, HOT = PAL.hot, WIN = PAL.accentSoft;
 function colorFor(v, scale, signed, out = new THREE.Color()) {
   if (signed) {
     const [r, g, b] = cmap.diverging(v / scale);
@@ -102,7 +104,7 @@ function AtlasRoom({ geo, data, scale, signed, y, onPick, onHover, inputPixels, 
         }
     }
     tex.needsUpdate = true;
-  }, [tex, geo, data, scale, signed, inputPixels, inputChannels]);
+  }, [tex, geo, data, scale, signed, inputPixels, inputChannels, getTheme()]); // repaint on a theme change
   const pick = (e, fn) => {
     e.stopPropagation();
     const ax = Math.floor(e.uv.x * geo.texW), ay = geo.texH - 1 - Math.floor(e.uv.y * geo.texH);
@@ -142,7 +144,7 @@ function SphereRoom({ geo, data, scale, signed, y, onPick, onHover, x0 = 0, pods
       mesh.current.setColorAt(i, c);
     }
     if (mesh.current.instanceColor) mesh.current.instanceColor.needsUpdate = true;
-  }, [geo, data, scale, signed, pods, pred]);
+  }, [geo, data, scale, signed, pods, pred, getTheme()]); // recolour on a theme change
   return (
     <group position={[0, y, 0]}>
       <instancedMesh
@@ -176,7 +178,7 @@ function Marker({ pos, size = 0.25 }) {
   return (
     <mesh ref={ref}>
       <sphereGeometry args={[1, 16, 12]} />
-      <meshBasicMaterial color="#ffb547" wireframe transparent opacity={0.8} toneMapped={false} />
+      <meshBasicMaterial color={sceneHex().accent} wireframe transparent opacity={0.8} toneMapped={false} />
     </mesh>
   );
 }
@@ -195,17 +197,17 @@ function TracePath({ points }) {
   return (
     <group>
       <line geometry={line}>
-        <lineBasicMaterial color="#ffd27a" toneMapped={false} />
+        <lineBasicMaterial color={sceneHex().accentSoft} toneMapped={false} />
       </line>
       {points.map((p, i) => (
         <mesh key={i} position={p}>
           <sphereGeometry args={[0.09, 12, 8]} />
-          <meshBasicMaterial color="#ffb547" toneMapped={false} />
+          <meshBasicMaterial color={sceneHex().accent} toneMapped={false} />
         </mesh>
       ))}
       <mesh ref={dot}>
         <sphereGeometry args={[0.12, 12, 8]} />
-        <meshBasicMaterial color="#fff2c4" toneMapped={false} />
+        <meshBasicMaterial color={sceneHex().spark} toneMapped={false} />
       </mesh>
     </group>
   );
@@ -237,7 +239,7 @@ function AttentionArcs({ podPos, query, weights }) {
   }, [podPos, query, weights]);
   return (
     <lineSegments geometry={geo}>
-      <lineBasicMaterial vertexColors transparent blending={THREE.AdditiveBlending} depthWrite={false} toneMapped={false} />
+      <lineBasicMaterial vertexColors transparent blending={lineBlending()} depthWrite={false} toneMapped={false} />
     </lineSegments>
   );
 }
@@ -260,7 +262,7 @@ function Beams({ from, targets }) {
   }, [from, targets]);
   return (
     <lineSegments geometry={geo}>
-      <lineBasicMaterial vertexColors transparent blending={THREE.AdditiveBlending} depthWrite={false} toneMapped={false} />
+      <lineBasicMaterial vertexColors transparent blending={lineBlending()} depthWrite={false} toneMapped={false} />
     </lineSegments>
   );
 }
@@ -295,7 +297,12 @@ function Frame({ height, nonce, cx = 0, width = ROOM_W, focus }) {
 
 // rooms: [{name, op, dims, layout, isOutput, label}]; values: {name: Float32Array without batch}
 // sae: {room, F, featNow: Float32Array(F), scale} or null
-export default function LabScene({ rooms, values, scales, inputPixels, inputChannels, classes, pred, selected, onSelect, onHover, sae, frameNonce, focusRoom, edges, trace }) {
+export default function LabScene(props) {
+  const theme = useTheme(); // re-render materials, colors and background on a theme change
+  return <LabSceneInner {...props} theme={theme} />;
+}
+
+function LabSceneInner({ theme, rooms, values, scales, inputPixels, inputChannels, classes, pred, selected, onSelect, onHover, sae, frameNonce, focusRoom, edges, trace }) {
   const geos = useMemo(() => rooms.map((r, i) => roomGeometry(r, i === 0)), [rooms]);
   const ys = rooms.map((_, i) => i * GAP);
   const height = (rooms.length - 1) * GAP;
@@ -321,7 +328,7 @@ export default function LabScene({ rooms, values, scales, inputPixels, inputChan
 
   return (
     <Canvas camera={{ position: [9, 9, 13], fov: 42, near: 0.1, far: 500 }} dpr={[1, 2]} gl={{ preserveDrawingBuffer: true }}>
-      <color attach="background" args={['#05070d']} />
+      <color attach="background" args={[sceneHex(theme).bg]} />
       {rooms.map((r, i) => {
         const g = geos[i];
         const common = { geo: g, data: values[r.name], scale: scales[r.name] ?? 1, signed: !!scales[`${r.name}:signed`], y: ys[i] };
@@ -346,7 +353,7 @@ export default function LabScene({ rooms, values, scales, inputPixels, inputChan
           {/* the beam joining a layer to its dictionary */}
           <mesh position={[(geos[saeIdx].width ?? ROOM_W) / 2 + 1.1, ys[saeIdx], 0]} rotation-z={Math.PI / 2}>
             <cylinderGeometry args={[0.04, 0.04, 2.2, 8]} />
-            <meshBasicMaterial color="#ffb547" transparent opacity={0.6} toneMapped={false} />
+            <meshBasicMaterial color={sceneHex().accent} transparent opacity={0.6} toneMapped={false} />
           </mesh>
           <SphereRoom
             geo={saeGeo} data={sae.featNow} scale={sae.scale || 1} signed={false} y={ys[saeIdx]} x0={saeX}

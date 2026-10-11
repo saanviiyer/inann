@@ -6,6 +6,7 @@ import { LAYERS, ORDER_NEURONS, ORDER_FEATURES, incoming, resolveSource } from '
 import { net, sae, SCALE, layerSize } from '../lib/model.js';
 import { featureLogitEffect } from '../lib/sae.js';
 import { cmap } from './ui.jsx';
+import { PAL, useTheme, getTheme, sceneHex, lineBlending } from '../lib/theme.js';
 
 // ---------- layout: every neuron gets a fixed spot inside its layer's room ----------
 // SAE features take the dense room's slot in the stack when feature mode is on
@@ -46,11 +47,8 @@ export function worldPos(key, i, gap, v = new THREE.Vector3()) {
   return v.set(b[i * 3], b[i * 3 + 1] + layerY(key, gap), b[i * 3 + 2]);
 }
 
-const BASE_COL = new THREE.Color('#121a2b');
-const GLOW_COL = new THREE.Color('#8af0ff');
-const HOT_COL = new THREE.Color('#ffffff');
-const RF_COL = new THREE.Color('#ffb547');
-const WIN_COL = new THREE.Color('#ffd27a');
+// theme-aware colors, shared and updated in place when the theme changes
+const BASE_COL = PAL.base, GLOW_COL = PAL.glow, HOT_COL = PAL.hot, RF_COL = PAL.accent, WIN_COL = PAL.accentSoft;
 
 // ---------- one layer: an instanced mesh whose brightness is the activation ----------
 function Layer({ k, target, live, rfMask, pred, onSelect, onHover, gapRef, paused, stamp }) {
@@ -84,7 +82,8 @@ function Layer({ k, target, live, rfMask, pred, onSelect, onHover, gapRef, pause
     a.start = a.t + SLOT[k] * 0.11;
     a.active = true;
   }, [stamp, k, from, disp]);
-  useEffect(() => { anim.current.active = true; }, [rfMask, pred, live]);
+  const theme = useTheme();
+  useEffect(() => { anim.current.active = true; }, [rfMask, pred, live, theme]);
 
   useFrame((_, dt) => {
     const a = anim.current;
@@ -122,7 +121,7 @@ function Layer({ k, target, live, rfMask, pred, onSelect, onHover, gapRef, pause
       {/* floor of the room */}
       <mesh rotation-x={-Math.PI / 2} position-y={-0.06}>
         <planeGeometry args={FLOOR[k]} />
-        <meshBasicMaterial color="#0d1424" transparent opacity={0.35} side={THREE.DoubleSide} depthWrite={false} />
+        <meshBasicMaterial color={sceneHex(theme).floor} transparent opacity={theme === 'light' ? 0.6 : 0.35} side={THREE.DoubleSide} depthWrite={false} />
       </mesh>
       <Html position={[k === 'conv1' ? -4.4 : k === 'out' ? -4.9 : k === 'sae' ? -4.6 : -3.9, 0, 0]} center style={{ pointerEvents: 'none' }}>
         <div className="whitespace-nowrap text-[11px] uppercase tracking-[0.18em] text-dim">{label}</div>
@@ -190,7 +189,7 @@ function Edges({ selected, f, gapRef, mode }) {
   if (!data) return null;
   return (
     <lineSegments geometry={geo}>
-      <lineBasicMaterial vertexColors transparent blending={THREE.AdditiveBlending} depthWrite={false} toneMapped={false} />
+      <lineBasicMaterial vertexColors transparent blending={lineBlending()} depthWrite={false} toneMapped={false} />
     </lineSegments>
   );
 }
@@ -211,7 +210,7 @@ function SelectionMarker({ selected, gapRef }) {
   return (
     <mesh ref={ref}>
       <sphereGeometry args={[1, 16, 12]} />
-      <meshBasicMaterial color="#ffb547" wireframe transparent opacity={0.7} toneMapped={false} />
+      <meshBasicMaterial color={sceneHex(getTheme()).accent} wireframe transparent opacity={0.7} toneMapped={false} />
     </mesh>
   );
 }
@@ -245,12 +244,12 @@ function SignalPath({ path, gapRef, show }) {
   return (
     <group>
       <line geometry={line}>
-        <lineBasicMaterial color="#ffd27a" transparent opacity={0.85} toneMapped={false} />
+        <lineBasicMaterial color={sceneHex(getTheme()).accentSoft} transparent opacity={0.85} toneMapped={false} />
       </line>
       {[0, 1, 2, 3].map((j) => (
         <mesh key={j} ref={(m) => (dots.current[j] = m)}>
           <sphereGeometry args={[0.09, 12, 8]} />
-          <meshBasicMaterial color="#fff2c4" toneMapped={false} />
+          <meshBasicMaterial color={sceneHex(getTheme()).spark} toneMapped={false} />
         </mesh>
       ))}
     </group>
@@ -366,7 +365,7 @@ function Stars() {
   }, []);
   return (
     <points geometry={geo}>
-      <pointsMaterial size={0.08} color="#5d6b8a" sizeAttenuation />
+      <pointsMaterial size={0.08} color={sceneHex(getTheme()).stars} sizeAttenuation />
     </points>
   );
 }
@@ -394,7 +393,7 @@ function FloatImage({ values, w = 8, h = 8, map = 'gray', position, size = 1.2, 
     <group position={position}>
       <mesh>
         <planeGeometry args={[size * (w / Math.max(w, h)) + 0.08, size * (h / Math.max(w, h)) + 0.08]} />
-        <meshBasicMaterial color="#ffb547" toneMapped={false} />
+        <meshBasicMaterial color={sceneHex(getTheme()).accent} toneMapped={false} />
       </mesh>
       <mesh position-z={0.01}>
         <planeGeometry args={[size * (w / Math.max(w, h)), size * (h / Math.max(w, h))]} />
@@ -443,6 +442,7 @@ function Floating({ selected, gapRef, fv, patches, ring }) {
 }
 
 function Scene(props) {
+  useTheme(); // re-render the scene (materials, background) when the theme changes
   const { f, stamp, selected, onSelect, onHover, xray, follow, paused, path, rfMask, fv, patches, ring, showPath, active, mode, flyTo } = props;
   const gapRef = useRef(gapFor(xray));
   gapRef.current = gapFor(xray);
@@ -458,8 +458,7 @@ function Scene(props) {
       dpr={[1, 2]}
       gl={{ antialias: true, powerPreference: 'high-performance' }}
     >
-      <color attach="background" args={['#05070d']} />
-      <fog attach="fog" args={['#05070d', 28, 70]} />
+      <ThemedBackground />
       <Stars />
       {order.map((k) => (
         <Layer
@@ -487,3 +486,13 @@ function Scene(props) {
 }
 
 export default React.memo(Scene);
+
+function ThemedBackground() {
+  const h = sceneHex(getTheme());
+  return (
+    <>
+      <color attach="background" args={[h.bg]} />
+      <fog attach="fog" args={[h.bg, 28, 70]} />
+    </>
+  );
+}

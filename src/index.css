@@ -11,8 +11,30 @@
   --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
 }
 
+/* Light theme (the default): warm beige paper. Tailwind's slate scale is inverted here so every
+   existing text-slate-* class reads dark on light; black/white swap for overlays. */
+:root[data-theme="light"] {
+  --color-space: #f4eee2;
+  --color-panel: #fbf7ef;
+  --color-line: #ddd2bf;
+  --color-glow: #0f6e8c;
+  --color-warm: #b45f0e;
+  --color-cool: #2f5fbf;
+  --color-dim: #7a6e5c;
+  --color-slate-100: #1f1a14;
+  --color-slate-200: #2c251c;
+  --color-slate-300: #463d31;
+  --color-slate-400: #6a5f4e;
+  --color-black: #fffaf0;
+  --color-white: #1f1a14;
+  --ink: #2b241b;
+  --pad: #fffdf8;
+  color-scheme: light;
+}
+:root[data-theme="dark"] { --ink: #e6ebf5; --pad: #070a12; color-scheme: dark; }
+
 html, body, #root { height: 100%; }
-body { background: var(--color-space); color: #e6ebf5; margin: 0; }
+body { background: var(--color-space); color: var(--ink); margin: 0; transition: background 0.2s, color 0.2s; }
 canvas.pix { image-rendering: pixelated; }
 .scroll-thin::-webkit-scrollbar { width: 6px; }
-.scroll-thin::-webkit-scrollbar-thumb { background: #1c2436; border-radius: 3px; }
+.scroll-thin::-webkit-scrollbar-thumb { background: var(--color-line); border-radius: 3px; }

@@ -2,10 +2,12 @@ import React, { useEffect, useRef } from 'react';
 import { PixelGrid, Btn } from './ui.jsx';
 import { DIGITS, LABELS } from '../lib/model.js';
 import { toDigit } from '../lib/digitize.js';
+import { sceneHex, useTheme } from '../lib/theme.js';
 
 const SAMPLES = Array.from({ length: 10 }, (_, d) => LABELS.indexOf(d));
 
 export default function DrawPad({ x, onChange }) {
+  const theme = useTheme();
   const cv = useRef(null);
   const drawing = useRef(false);
   const last = useRef(null);
@@ -15,15 +17,19 @@ export default function DrawPad({ x, onChange }) {
     const ctx = cv.current.getContext('2d');
     ctx.clearRect(0, 0, 200, 200);
     for (let p = 0; p < 64; p++) {
-      ctx.fillStyle = `rgba(230,235,245,${v[p]})`;
+      ctx.globalAlpha = v[p];
+      ctx.fillStyle = sceneHex().ink;
       ctx.fillRect((p % 8) * 25, Math.floor(p / 8) * 25, 25, 25);
     }
+    ctx.globalAlpha = 1;
   };
   useEffect(() => {
     paint(x); // start with the bundled sample on the pad, so strokes add to it
     const ctx = cv.current.getContext('2d');
     ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.strokeStyle = '#e6ebf5'; ctx.lineWidth = 16;
   }, []);
+
+  useEffect(() => { paint(x); }, [theme]); // eslint-disable-line
 
   const push = () => {
     if (pending.current) return;
@@ -48,8 +54,8 @@ export default function DrawPad({ x, onChange }) {
             ref={cv}
             width={200}
             height={200}
-            className="h-[150px] w-[150px] touch-none cursor-crosshair rounded-md border border-line bg-[#070a12]"
-            onPointerDown={(e) => { drawing.current = true; last.current = pos(e); e.currentTarget.setPointerCapture(e.pointerId); }}
+            className="h-[150px] w-[150px] touch-none cursor-crosshair rounded-md border border-line bg-[var(--pad)]"
+            onPointerDown={(e) => { drawing.current = true; last.current = pos(e); e.currentTarget.getContext('2d').strokeStyle = sceneHex().ink; e.currentTarget.setPointerCapture(e.pointerId); }}
             onPointerMove={(e) => {
               if (!drawing.current) return;
               const p = pos(e), ctx = cv.current.getContext('2d');

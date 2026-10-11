@@ -188,7 +188,7 @@ export function Neighborhood({ sel, onSelect }) {
         ref={cv}
         width={W}
         height={H}
-        className="w-full cursor-pointer rounded bg-[#070a12]"
+        className="w-full cursor-pointer rounded bg-[var(--pad)]"
         onClick={(e) => {
           const r = e.currentTarget.getBoundingClientRect();
           const x = ((e.clientX - r.left) / r.width) * W, y = ((e.clientY - r.top) / r.height) * H;

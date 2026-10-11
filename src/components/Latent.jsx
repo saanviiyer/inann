@@ -1,20 +1,21 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import LatentCloud from './LatentCloud.jsx';
 import { PixelGrid, Term, Cite, NotShown, Btn } from './ui.jsx';
-import { LATENT_LAYERS, pca, neighbours, knnAccuracy, separation } from '../lib/latent.js';
+import { LATENT_LAYERS, pca, neighbours, knnAccuracy, separation, axesOf } from '../lib/latent.js';
 import { net, sae, DIGITS, LABELS } from '../lib/model.js';
 
 const CLASSES = Array.from({ length: 10 }, (_, d) => String(d));
 import { forward } from '../lib/net.js';
 
-export function LatentScene({ layer, f, highlight, trail, onPick }) {
-  const P = useMemo(() => pca(layer), [layer]);
+export function LatentScene({ layer, f, highlight, trail, onPick, axes = 0 }) {
+  const P = useMemo(() => axesOf(pca(layer), axes), [layer, axes]);
   const trailVecs = useMemo(() => trail.map((acts) => acts[layer]), [trail, layer]);
   return <LatentCloud P={P} labels={LABELS} classes={CLASSES} me={f.acts[layer]} trail={trailVecs} highlight={highlight} onPick={onPick} />;
 }
 
-export function LatentPanel({ layer, setLayer, f, highlight, setHighlight, setX, setTrail }) {
-  const P = useMemo(() => pca(layer), [layer]);
+export function LatentPanel({ layer, setLayer, f, highlight, setHighlight, setX, setTrail, axes = 0, setAxes }) {
+  const full = useMemo(() => pca(layer), [layer]);
+  const P = useMemo(() => axesOf(full, axes), [full, axes]);
   const sep = useMemo(() => LATENT_LAYERS.map((l) => ({ ...l, acc: knnAccuracy(l.key), ratio: separation(l.key) })), []);
   const maxRatio = Math.max(...sep.map((l) => l.ratio));
   const sepOf = (k) => sep.find((l) => l.key === k);
@@ -39,8 +40,16 @@ export function LatentPanel({ layer, setLayer, f, highlight, setHighlight, setX,
         {LATENT_LAYERS.map((l) => <Btn key={l.key} on={layer === l.key} onClick={() => setLayer(l.key)}>{l.label}</Btn>)}
       </div>
       <div className="text-xs text-slate-300">
-        This view keeps <span className="text-glow">{(100 * P.explained.reduce((x, y) => x + y, 0)).toFixed(0)}%</span> of the spread in {P.D} dimensions
-        (PC1 {(100 * P.explained[0]).toFixed(0)}%, PC2 {(100 * P.explained[1]).toFixed(0)}%, PC3 {(100 * P.explained[2]).toFixed(0)}%).
+        These three axes keep <span className="text-glow">{(100 * P.explained.reduce((x, y) => x + y, 0)).toFixed(0)}%</span> of the spread in {P.D} dimensions
+        (PC{P.start + 1} {(100 * P.explained[0]).toFixed(0)}%, PC{P.start + 2} {(100 * P.explained[1]).toFixed(0)}%, PC{P.start + 3} {(100 * P.explained[2]).toFixed(0)}%).
+        {full.explained.length > 3 && (
+          <span className="mt-1 flex flex-wrap items-center gap-1">
+            <span className="text-dim">show axes</span>
+            {Array.from({ length: Math.floor(full.explained.length / 3) }, (_, k) => (
+              <Btn key={k} on={P.start === k * 3} onClick={() => setAxes?.(k * 3)}>PC {k * 3 + 1} to {k * 3 + 3}</Btn>
+            ))}
+          </span>
+        )}
       </div>
 
       <div>
@@ -105,10 +114,10 @@ export function LatentPanel({ layer, setLayer, f, highlight, setHighlight, setX,
         These digits are easy, so raw pixels already put most digits next to a same-digit neighbour ({(sepOf('input').acc * 100).toFixed(1)}%), and depth barely moves that number.
         What depth changes is the spacing: different digits sit {sepOf('input').ratio.toFixed(1)} times farther apart than same digits spread in pixels, and {sepOf('out').ratio.toFixed(1)} times at the output.
       </p>
-      <NotShown>
-        The other {P.D - 3} dimensions. Points that look close here can be far apart in the full space; the neighbour list uses the full space. Nonlinear maps like t-SNE are left out because they can invent clusters and distances.
-        <Cite id="wattenberg2016" />
-      </NotShown>
+      <p className="text-[11px] leading-snug text-dim">
+        The picture shows three axes at a time, so switch axes to see more of the {P.D} dimensions. The neighbour list and both measures use every
+        dimension. This page uses PCA rather than t-SNE because t-SNE can invent clusters and distances.<Cite id="wattenberg2016" />
+      </p>
     </div>
   );
 }

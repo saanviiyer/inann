@@ -20,7 +20,8 @@ import { describeUnit, searchUnits } from '../../lib/lab/summary.js';
 import { ScoreBadge } from '../FeatureRoom.jsx';
 import { occlusionMap, readClassProb, readChannelMax } from '../../lib/lab/occlusion.js';
 import { unitEdges, tracePath } from '../../lib/lab/edges.js';
-import { pcaOf, knnAccOf, separationOf } from '../../lib/latent.js';
+import { pcaOf, knnAccOf, separationOf, axesOf } from '../../lib/latent.js';
+import { sceneHex } from '../../lib/theme.js';
 
 const BASE = import.meta.env.BASE_URL;
 export const EXAMPLES = [
@@ -735,8 +736,8 @@ function DrawBox({ onDrawn }) {
     <div>
       <canvas
         ref={cv} width={200} height={200}
-        className="h-[110px] w-[110px] touch-none cursor-crosshair rounded border border-line bg-[#070a12]"
-        onPointerDown={(e) => { drawing.current = true; last.current = pos(e); e.currentTarget.setPointerCapture(e.pointerId); }}
+        className="h-[110px] w-[110px] touch-none cursor-crosshair rounded border border-line bg-[var(--pad)]"
+        onPointerDown={(e) => { drawing.current = true; last.current = pos(e); e.currentTarget.getContext('2d').strokeStyle = sceneHex().ink; e.currentTarget.setPointerCapture(e.pointerId); }}
         onPointerMove={(e) => {
           if (!drawing.current) return;
           const p = pos(e), ctx = cv.current.getContext('2d');
@@ -1122,7 +1123,9 @@ function SaeCard({ model, rooms, store, sae, setSae, ds, kind, norm, onShow, sae
   const candKey = candidates.map((c) => c.name).join('|');
   useEffect(() => {
     // default to the deepest hidden layer; reset whenever the model or its rooms change
-    if (candidates.length && !candidates.some((c) => c.name === room)) setRoom(candidates[candidates.length - 1].name);
+    // a link can preselect the layer (?saeLayer=tensor name); otherwise the deepest hidden layer
+    const wanted = new URLSearchParams(location.search).get('saeLayer');
+    if (candidates.length && !candidates.some((c) => c.name === room)) setRoom((candidates.find((c) => c.name === wanted) ?? candidates[candidates.length - 1]).name);
   }, [candKey]); // eslint-disable-line
   const r = rooms.find((x) => x.name === room);
   const D = r?.layout.C ?? 0;
@@ -1345,7 +1348,9 @@ function LabLatent({ model, store, rooms, sae, outs, ds, setItem, classes }) {
     const st = store.stats[key];
     return Array.from({ length: store.N }, (_, i) => st.full.subarray(i * st.layout.size, (i + 1) * st.layout.size));
   }, [store, key, sae]);
-  const P = useMemo(() => (X ? pcaOf(X) : null), [X]);
+  const [axes, setAxes] = useState(0);
+  const full = useMemo(() => (X ? pcaOf(X, { k: Math.min(9, X[0].length) }) : null), [X]);
+  const P = useMemo(() => (full ? axesOf(full, axes) : null), [full, axes]);
   const me = useMemo(() => {
     if (!outs || !key) return null;
     if (key === '__sae') { const L = model.describe(sae.room).layout; return featuresNow(sae.sae, outs[sae.room].data, L).max; }
@@ -1365,7 +1370,13 @@ function LabLatent({ model, store, rooms, sae, outs, ds, setItem, classes }) {
             {options.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
           </select>
         </Field>
-        {P && <div className="text-slate-300">These 3 axes keep {(100 * P.explained.reduce((a, b) => a + b, 0)).toFixed(0)}% of the spread in {P.D} dimensions.<Cite id="jolliffe2016" /></div>}
+        {P && <div className="text-slate-300">PC {P.start + 1} to {P.start + 3} keep {(100 * P.explained.reduce((a, b) => a + b, 0)).toFixed(0)}% of the spread in {P.D} dimensions.<Cite id="jolliffe2016" /></div>}
+        {full && full.explained.length > 3 && (
+          <div className="flex flex-wrap items-center gap-1">
+            <span className="text-dim">axes</span>
+            {Array.from({ length: Math.floor(full.explained.length / 3) }, (_, k) => <Btn key={k} on={P.start === k * 3} onClick={() => setAxes(k * 3)}>PC {k * 3 + 1} to {k * 3 + 3}</Btn>)}
+          </div>
+        )}
         {store.labels && (
           <Field label="highlight">
             <select value={highlight ?? ''} onChange={(e) => setHighlight(e.target.value === '' ? null : +e.target.value)} className={selectCls}>
@@ -1386,7 +1397,7 @@ function LabLatent({ model, store, rooms, sae, outs, ds, setItem, classes }) {
             )}
           </div>
         )}
-        <div className="text-[10px] text-dim">Click a mark to load that item. The 3D view hides the other {P ? P.D - 3 : 0} dimensions; the measures use all of them.<Cite id="wattenberg2016" /></div>
+        <div className="text-[10px] text-dim">Click a mark to load that item. Switch axes to see more of the space; the measures use every dimension. The view uses PCA because t-SNE can invent clusters.<Cite id="wattenberg2016" /></div>
       </div>
     </div>
   );
@@ -1483,7 +1494,7 @@ function TokenInput({ kind, ids, setIds, setKind, model }) {
 // A token item as text, with the position where a unit fired highlighted.
 function TokenThumb({ ids, kind, pos }) {
   return (
-    <div className="rounded bg-[#070a12] px-1 py-0.5 font-mono text-[10px] leading-tight tracking-tight text-slate-300">
+    <div className="rounded bg-[var(--pad)] px-1 py-0.5 font-mono text-[10px] leading-tight tracking-tight text-slate-300">
       {Array.from(ids).map((v, j) => (
         <span key={j} className={j === pos ? 'rounded-sm bg-warm/80 text-black' : ''}>{kind.vocab ? kind.vocab[v] ?? '?' : `${v} `}</span>
       ))}

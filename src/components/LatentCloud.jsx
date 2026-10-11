@@ -6,9 +6,9 @@ import { OrbitControls, Html } from '@react-three/drei';
 import * as THREE from 'three';
 
 const R = 5;
-const NEUTRAL = new THREE.Color('#c3c2b7');
-const DIM = new THREE.Color('#4a4f5c');
-const HIGHLIGHT = new THREE.Color('#3987e5');
+import { PAL, useTheme, sceneHex } from '../lib/theme.js';
+// numerals: neutral ink, dimmed when another class is highlighted (theme-aware, shared)
+const NEUTRAL = PAL.neutral, DIM = PAL.dimPoint, HIGHLIGHT = PAL.highlight;
 
 const texCache = new Map();
 function labelTex(text) {
@@ -73,14 +73,14 @@ function You({ p, trail }) {
     <group>
       <mesh ref={ref}>
         <sphereGeometry args={[0.18, 20, 14]} />
-        <meshBasicMaterial color="#ffb547" toneMapped={false} />
+        <meshBasicMaterial color={sceneHex().accent} toneMapped={false} />
         <Html center position={[0, 0.42, 0]} style={{ pointerEvents: 'none' }}>
           <div className="whitespace-nowrap rounded bg-black/60 px-1 text-[10px] text-warm">your input</div>
         </Html>
       </mesh>
       {trail.length > 1 && (
         <line geometry={line}>
-          <lineBasicMaterial color="#ffd27a" transparent opacity={0.8} toneMapped={false} />
+          <lineBasicMaterial color={sceneHex().accentSoft} transparent opacity={0.8} toneMapped={false} />
         </line>
       )}
     </group>
@@ -96,7 +96,7 @@ function Axes() {
   return (
     <group>
       <lineSegments geometry={geo}>
-        <lineBasicMaterial color="#1c2436" />
+        <lineBasicMaterial color={sceneHex().axis} />
       </lineSegments>
       {[['PC1', [R + 0.4, 0, 0]], ['PC2', [0, R + 0.4, 0]], ['PC3', [0, 0, R + 0.4]]].map(([t, p]) => (
         <Html key={t} position={p} center style={{ pointerEvents: 'none' }}>
@@ -110,6 +110,7 @@ function Axes() {
 // P: result of pcaOf. labels: int per item or null; classes: names per label.
 // me: the current input's vector in the same space (or null); trail: list of vectors.
 export default function LatentCloud({ P, labels, classes, me, trail = [], highlight, onPick }) {
+  const theme = useTheme();
   const target = useMemo(() => P.pts.map((q) => q.map((v) => (v / P.scale) * R)), [P]);
   const groups = useMemo(() => {
     if (!labels) return [{ key: 'all', text: null, idx: P.pts.map((_, i) => i) }];
@@ -120,7 +121,7 @@ export default function LatentCloud({ P, labels, classes, me, trail = [], highli
   const trailW = useMemo(() => trail.map((v) => P.project(v).map((t) => (t / P.scale) * R)), [trail, P]);
   return (
     <Canvas camera={{ position: [8, 6, 10], fov: 45 }} dpr={[1, 2]}>
-      <color attach="background" args={['#05070d']} />
+      <color attach="background" args={[sceneHex(theme).bg]} />
       <Axes />
       {groups.map((g) => (
         <Group key={g.key} idx={g.idx} target={target} text={g.text} on={highlight === g.key} highlightActive={highlight != null} onPick={onPick} />

@@ -107,7 +107,18 @@ export default function SaePanel({ onOpen }) {
         A mixed neuron can be the sum of several narrower features, and the dictionary makes them visible one at a time. Here that holds on average, not for every feature, so check each room's examples.
         <Cite id="lieberum2024" />
       </p>
-      <NotShown>Features for the conv layers. The autoencoder is trained only on the 32 dense neurons.</NotShown>
+      <div className="rounded-md border border-glow/30 bg-glow/5 p-2 text-xs text-slate-300">
+        The autoencoder here covers the 32 dense neurons. To split a conv layer into features, open this same network in the Lab, which trains an
+        autoencoder on Conv 1 or Conv 2 in your browser, one vector per pixel, and docks its features beside the layer.
+        <div className="mt-1.5 flex flex-wrap gap-1.5">
+          {[['/Relu_output_0', 'Conv 1'], ['/Relu_1_output_0', 'Conv 2']].map(([t, label]) => (
+            <a key={t} className="rounded-md border border-glow/50 px-2.5 py-1 text-glow hover:bg-glow/10"
+              href={`${import.meta.env.BASE_URL}?model=${import.meta.env.BASE_URL}examples/optdigits_cnn.onnx&meta=${import.meta.env.BASE_URL}examples/optdigits_cnn.meta.json&saeLayer=${encodeURIComponent(t)}#lab`}>
+              Open {label} in the Lab
+            </a>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }

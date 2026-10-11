@@ -170,3 +170,31 @@ export class Boundary extends React.Component {
     return this.props.children;
   }
 }
+
+// Why this project exists, in the author's words. Shown on the opening page and in About.
+export function AboutBlurb({ compact }) {
+  return (
+    <div className={compact ? 'space-y-2' : 'space-y-2 rounded-lg border border-line bg-panel p-4'}>
+      <h1 className="text-lg font-semibold text-slate-100">
+        <span className="tracking-[0.2em] text-glow">INANN</span>: in a neural network!
+      </h1>
+      <p className="text-sm leading-relaxed text-slate-300">
+        I started inann after I learned the Perceptron Learning Algorithm (PLA) in my Learning Systems class. I could watch a perceptron learn. Each mistake
+        nudges one line, and I could see every nudge. Real networks make the same kind of update across thousands of weights, and the steps disappear from
+        view. Interpretability research brings those steps back into view, and I want to do that work. With inann you can walk through a trained network, see
+        what each unit responds to, test what it causes, and split a layer into readable features, on a small model or on your own.
+      </p>
+    </div>
+  );
+}
+
+export function About({ onClose }) {
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 p-4" onClick={onClose}>
+      <div className="w-full max-w-xl rounded-lg border border-line bg-panel p-5" onClick={(e) => e.stopPropagation()}>
+        <AboutBlurb compact />
+        <div className="mt-3 text-right"><Btn onClick={onClose}>Close</Btn></div>
+      </div>
+    </div>
+  );
+}

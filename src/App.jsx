@@ -11,7 +11,8 @@ import { LatentScene, LatentPanel } from './components/Latent.jsx';
 import LabPage from './components/lab/LabPage.jsx';
 import { FeatureVis, Patches, Neighborhood } from './components/SeePanel.jsx';
 import { Adversarial, Occlusion, occlude } from './components/BreakPanel.jsx';
-import { Term, Cite, NotShown, Btn, Kbd, Sources, Boundary } from './components/ui.jsx';
+import { Term, Cite, NotShown, Btn, Kbd, Sources, Boundary, About } from './components/ui.jsx';
+import { useTheme, setTheme } from './lib/theme.js';
 import { net, sae, META, DIGITS, LABELS, describe, roomOf, roomName, bestUnitInRoom } from './lib/model.js';
 import { topExamples } from './lib/rooms.js';
 import { forward, receptiveField, strongestPath } from './lib/net.js';
@@ -100,11 +101,14 @@ export default function App() {
   const [pausedUI, setPausedUI] = useState(false);
   const [fv, setFv] = useState(null);
   const [sources, setSources] = useState(false);
+  const [about, setAbout] = useState(false);
+  const theme = useTheme();
   const paused = useRef(false);
   const [mode, setModeRaw] = useState('neurons');
   const [clamp, setClamp] = useState(null);
   const [flyTo, setFlyTo] = useState(null);
   const [latentLayer, setLatentLayer] = useState('dense');
+  const [latentAxes, setLatentAxes] = useState(0);
   const [highlight, setHighlight] = useState(null);
   const [trail, setTrail] = useState([]);
   const [entered, setEntered] = useState(false); // mount the 3D space the first time it is needed, then keep it
@@ -181,7 +185,10 @@ export default function App() {
   return (
     <div className="flex h-full flex-col">
       <header className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-line px-4 py-2">
-        <div className="text-sm font-semibold tracking-[0.3em] text-glow">INANN</div>
+        <button onClick={() => setAbout(true)} className="flex items-baseline gap-2 text-left" title="About this project">
+          <span className="text-sm font-semibold tracking-[0.3em] text-glow">INANN</span>
+          <span className="hidden text-[11px] text-dim sm:inline">in a neural network!</span>
+        </button>
         <div className="flex overflow-hidden rounded-md border border-line text-xs">
           {[['tour', 'Tour'], ['lab', 'Lab: your model']].map(([k, t]) => (
             <button key={k} onClick={() => setArea(k)} className={`px-2.5 py-1 ${area === k ? 'bg-glow/15 text-glow' : 'text-dim hover:text-slate-200'}`}>{t}</button>
@@ -201,7 +208,15 @@ export default function App() {
         <div className="ml-auto flex items-center gap-3 text-[11px] text-dim">
           <span><Kbd>space</Kbd> {pausedUI ? 'resume' : 'pause'}</span>
           {chapter > 1 && chapter < 8 && <span><Kbd>F</Kbd> follow the signal</span>}
+          <button onClick={() => setAbout(true)} className="text-glow/80 hover:text-glow">About</button>
           <button onClick={() => setSources(true)} className="text-glow/80 hover:text-glow">Sources</button>
+          <button
+            onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}
+            className="rounded-md border border-line px-2 py-0.5 text-slate-300 hover:border-glow/50"
+            title="switch between the light and dark themes"
+          >
+            {theme === 'light' ? 'Dark mode' : 'Light mode'}
+          </button>
         </div>
         {area === 'tour' && chapter > 1 && (
           <div className="flex w-full flex-wrap items-center gap-2">
@@ -299,7 +314,7 @@ export default function App() {
         <section className="relative order-1 h-[60vh] min-w-0 shrink-0 overflow-hidden lg:order-2 lg:h-auto lg:flex-1 lg:shrink">
           {chapter === 8 && (
             <div className="absolute inset-0 z-10">
-              <LatentScene layer={latentLayer} f={f} highlight={highlight} trail={trail} onPick={(i) => setX(DIGITS[i], 'sample')} />
+              <LatentScene layer={latentLayer} f={f} highlight={highlight} trail={trail} onPick={(i) => setX(DIGITS[i], 'sample')} axes={latentAxes} />
             </div>
           )}
           <div className={`absolute inset-0 ${chapter === 8 ? 'invisible' : ''}`}>
@@ -363,7 +378,7 @@ export default function App() {
           {chapter === 7 && <Boundary><SaePanel onOpen={(room) => openRoom(room, f.acts)} /></Boundary>}
           {chapter === 8 && (
             <Boundary>
-              <LatentPanel layer={latentLayer} setLayer={setLatentLayer} f={f} highlight={highlight} setHighlight={setHighlight} setX={setX} setTrail={setTrail} />
+              <LatentPanel layer={latentLayer} setLayer={(l) => { setLatentLayer(l); setLatentAxes(0); }} f={f} highlight={highlight} setHighlight={setHighlight} setX={setX} setTrail={setTrail} axes={latentAxes} setAxes={setLatentAxes} />
             </Boundary>
           )}
         </aside>
@@ -372,6 +387,7 @@ export default function App() {
         Feature rooms, test-this-neuron, explanation search and steering follow Neuronpedia<Cite id="lin2023" />; explanations follow Bills et al.<Cite id="bills2023" />. Everything runs in your browser from precomputed files.
       </footer>
       {sources && <Sources onClose={() => setSources(false)} />}
+      {about && <About onClose={() => setAbout(false)} />}
     </div>
   );
 }

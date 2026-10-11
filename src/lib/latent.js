@@ -99,10 +99,22 @@ export function separationOf(X, labels) {
   return between / c / within;
 }
 
+// A view of three consecutive principal components (start = 0 for PC1-3, 3 for PC4-6, ...),
+// shaped like a pcaOf result so the cloud can draw it.
+export function axesOf(P, start = 0) {
+  const s = Math.max(0, Math.min(start, P.pts[0].length - 3));
+  const pts = P.pts.map((q) => q.slice(s, s + 3));
+  return {
+    project: (x) => P.project(x).slice(s, s + 3), pts, D: P.D, start: s,
+    scale: Math.max(...pts.flat().map(Math.abs)) || 1, explained: P.explained.slice(s, s + 3),
+    total: P.explained.length,
+  };
+}
+
 // ---------- the Tour's versions, over its bundled held-out digits ----------
 const cache = new Map();
 export function pca(layer) {
-  if (!cache.has(layer)) cache.set(layer, pcaOf(ACTS[layer]));
+  if (!cache.has(layer)) cache.set(layer, pcaOf(ACTS[layer], { k: Math.min(9, ACTS[layer][0].length) }));
   return cache.get(layer);
 }
 export function neighbours(layer, x, k = 5) {
