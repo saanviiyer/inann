@@ -123,12 +123,12 @@ function Layer({ k, target, live, rfMask, pred, onSelect, onHover, gapRef, pause
         <planeGeometry args={FLOOR[k]} />
         <meshBasicMaterial color={sceneHex(theme).floor} transparent opacity={theme === 'light' ? 0.6 : 0.35} side={THREE.DoubleSide} depthWrite={false} />
       </mesh>
-      <Html position={[k === 'conv1' ? -4.4 : k === 'out' ? -4.9 : k === 'sae' ? -4.6 : -3.9, 0, 0]} center style={{ pointerEvents: 'none' }}>
+      <Html position={[k === 'conv1' ? -4.4 : k === 'out' ? -4.9 : k === 'sae' ? -4.6 : -3.9, 0, 0]} center zIndexRange={[10, 0]} style={{ pointerEvents: 'none' }}>
         <div className="whitespace-nowrap text-[11px] uppercase tracking-[0.18em] text-dim">{label}</div>
       </Html>
       {k === 'out' &&
         Array.from({ length: 10 }, (_, d) => (
-          <Html key={d} position={[BASE.out[d * 3], 0.55, BASE.out[d * 3 + 2]]} center style={{ pointerEvents: 'none' }}>
+          <Html key={d} position={[BASE.out[d * 3], 0.55, BASE.out[d * 3 + 2]]} center zIndexRange={[10, 0]} style={{ pointerEvents: 'none' }}>
             <div className={`text-sm font-semibold ${d === pred ? 'text-warm' : 'text-slate-400'}`}>{d}</div>
           </Html>
         ))}
@@ -400,7 +400,7 @@ function FloatImage({ values, w = 8, h = 8, map = 'gray', position, size = 1.2, 
         <meshBasicMaterial map={tex} toneMapped={false} />
       </mesh>
       {caption && (
-        <Html position={[0, -size / 2 - 0.18, 0]} center style={{ pointerEvents: 'none' }}>
+        <Html position={[0, -size / 2 - 0.18, 0]} center zIndexRange={[10, 0]} style={{ pointerEvents: 'none' }}>
           <div className="whitespace-nowrap rounded bg-black/60 px-1 text-[10px] text-slate-200">{caption}</div>
         </Html>
       )}

@@ -74,7 +74,7 @@ function You({ p, trail }) {
       <mesh ref={ref}>
         <sphereGeometry args={[0.18, 20, 14]} />
         <meshBasicMaterial color={sceneHex().accent} toneMapped={false} />
-        <Html center position={[0, 0.42, 0]} style={{ pointerEvents: 'none' }}>
+        <Html center position={[0, 0.42, 0]} zIndexRange={[10, 0]} style={{ pointerEvents: 'none' }}>
           <div className="whitespace-nowrap rounded bg-black/60 px-1 text-[10px] text-warm">your input</div>
         </Html>
       </mesh>
@@ -99,7 +99,7 @@ function Axes() {
         <lineBasicMaterial color={sceneHex().axis} />
       </lineSegments>
       {[['PC1', [R + 0.4, 0, 0]], ['PC2', [0, R + 0.4, 0]], ['PC3', [0, 0, R + 0.4]]].map(([t, p]) => (
-        <Html key={t} position={p} center style={{ pointerEvents: 'none' }}>
+        <Html key={t} position={p} center zIndexRange={[10, 0]} style={{ pointerEvents: 'none' }}>
           <div className="text-[10px] text-dim">{t}</div>
         </Html>
       ))}
