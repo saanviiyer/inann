@@ -121,19 +121,26 @@ function applyClamp(a, clamp, layer, perChannel) {
   return b;
 }
 
+// Add a vector to a whole layer: steering along a direction (add = { layer, vec }).
+function applyAdd(a, add, layer) {
+  if (!add || add.layer !== layer) return a;
+  return a.map((v, i) => v + add.vec[i]);
+}
+
 // x: Float32Array(64), values 0..1. opts.sae: the loaded SAE (adds acts.sae);
-// opts.clamp: a steering intervention, applied after the ReLU of its layer.
+// opts.clamp: a steering intervention, applied after the ReLU of its layer;
+// opts.add: a direction added to one layer after its ReLU.
 export function forward(net, x, opts = {}) {
-  const { sae, clamp } = opts;
-  const input = Float32Array.from(x);
+  const { sae, clamp, add } = opts;
+  const input = applyAdd(Float32Array.from(x), add, 'input');
   const c1pre = conv(input, 1, 8, 8, net.c1w, net.c1b, 6);
-  const c1 = applyClamp(relu(c1pre), clamp, 'conv1', 64);
+  const c1 = applyAdd(applyClamp(relu(c1pre), clamp, 'conv1', 64), add, 'conv1');
   const p1 = pool(c1, 6, 8, 8);
   const c2pre = conv(p1.out, 6, 4, 4, net.c2w, net.c2b, 12);
-  const c2 = applyClamp(relu(c2pre), clamp, 'conv2', 16);
+  const c2 = applyAdd(applyClamp(relu(c2pre), clamp, 'conv2', 16), add, 'conv2');
   const p2 = pool(c2, 12, 4, 4);
   const dpre = dense(p2.out, net.dw, net.db, 32);
-  const d = applyClamp(relu(dpre), clamp, 'dense');
+  const d = applyAdd(applyClamp(relu(dpre), clamp, 'dense'), add, 'dense');
   let feats = null, dUsed = d;
   if (sae) {
     feats = saeEncode(sae, d);

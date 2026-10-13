@@ -7,6 +7,7 @@ import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls, Html } from '@react-three/drei';
 import * as THREE from 'three';
 import { cmap } from '../ui.jsx';
+import { Thermometer } from '../ProbeTower.jsx';
 import { PAL, useTheme, getTheme, sceneHex, lineBlending } from '../../lib/theme.js';
 
 const GAP = 3.2;
@@ -306,7 +307,7 @@ export default function LabScene(props) {
   return <LabSceneInner {...props} theme={theme} />;
 }
 
-function LabSceneInner({ theme, rooms, values, scales, inputPixels, inputChannels, classes, pred, selected, onSelect, onHover, sae, frameNonce, focusRoom, edges, trace }) {
+function LabSceneInner({ theme, rooms, values, scales, inputPixels, inputChannels, classes, pred, selected, onSelect, onHover, sae, frameNonce, focusRoom, edges, trace, probes }) {
   const geos = useMemo(() => rooms.map((r, i) => roomGeometry(r, i === 0)), [rooms]);
   const ys = rooms.map((_, i) => i * GAP);
   const height = (rooms.length - 1) * GAP;
@@ -349,6 +350,12 @@ function LabSceneInner({ theme, rooms, values, scales, inputPixels, inputChannel
                 <div>{r.dims.join('×')}</div>
               </div>
             </Html>
+            {probes?.results[r.name] && (
+              // the layer's probe thermometer, at the front-left corner of its floor (Alain & Bengio 2016)
+              <group position={[-(Math.max(g.width ?? 0, 2 * (g.r ?? 0)) / 2) - 0.4, ys[i] + 0.2, Math.max(g.depth ?? 0, 2 * (g.r ?? 0)) / 2 + 0.4]}>
+                <Thermometer test={probes.results[r.name].test} ctrlTest={probes.results[r.name].ctrlTest} chance={probes.majority} height={GAP * 0.55} r={0.1} />
+              </group>
+            )}
           </group>
         );
       })}

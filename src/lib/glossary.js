@@ -38,4 +38,6 @@ export const GLOSSARY = {
   'nearest neighbours': 'The held-out digits whose representation in this layer is closest to a given one.',
   'separation ratio': 'Average distance between different digits divided by how spread out each digit is; higher means tighter, more separate groups.',
   'latent space': 'The space of a layer\'s activations, where every input becomes one point.',
+  'linear probe': 'A one-layer classifier trained on a frozen layer\'s activations. Its held-out accuracy says how much of the label a straight line can read off that layer.',
+  'mass-mean direction': 'The average activation of items with one label minus the average of all the others: the simplest direction that separates them.',
 };

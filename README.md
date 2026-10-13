@@ -4,7 +4,7 @@
 
 **Live: https://saanviiyer.github.io/inann/** (the Lab is at https://saanviiyer.github.io/inann/#lab)
 
-- **Tour** (`/`): eight short chapters on a tiny trained digit network. They cover what neurons see, how to break the network, feature rooms with search, steering, sparse-autoencoder features and latent space. Every number on the page is computed from the bundled model.
+- **Tour** (`/`): nine short chapters on a tiny trained digit network. They cover what neurons see, how to break the network, feature rooms with search, steering, sparse-autoencoder features, latent space and linear probes. Every number on the page is computed from the bundled model.
 - **Lab** (`/#lab`): drop in **your own ONNX model** and get the same tools for it. Its layers become rooms in 3D, and every unit gets a room with its dataset statistics and weights. You can clamp units and run causal tests, train a sparse autoencoder on any layer in the browser and watch its features dock beside the layer, and use activation patching, occlusion maps, a gallery, a report and the latent space. It handles CNNs, MLPs, ResNets, MobileNets and transformers, including Hugging Face exports.
 
 ```
@@ -25,6 +25,7 @@ npm test           # engine and model checks
 6. **Steer it.** Clamp any unit to a value and watch the answer reroute live. The presets were found by a search over every unit (`scripts/find_presets.mjs`) and ranked by selectivity: how much the clamp moves one digit class, minus how much it sends every other digit to the same answer. Each preset shows its full counts.
 7. **Neurons vs features.** A top-k sparse autoencoder (256 features over the 32 dense neurons, k = 4) replaces the dense room when the header switch is on **Features**. A comparison view splits the most mixed neuron into the features that carry it.
 8. **Latent space.** The 450 held-out digits are shown as numerals in the PCA space of any layer, and they glide between layers when you switch. Your input appears as a live point. The view also offers nearest neighbours, a walk between two digits drawn as a trail, and two separability measures computed in the full space.
+9. **Probes.** A thermometer on every layer (Alain & Bengio 2016): a softmax-regression probe per layer, fitted on 312 held-out digits and scored on the other 138, drawn as a glass tube filled to its accuracy. Each probe comes with three controls. The same probe on shuffled labels shows how much it can memorise (Hewitt & Liang 2019). The same probe on a copy of the network with shuffled weights shows what random features already give. A majority-class floor sits under both. A steering test then adds a layer's mass-mean direction for one digit (Marks & Tegmark 2023; Li et al. 2023) and counts how many held-out digits switch to it, against a random direction of the same length.
 
 Keys: `space` pauses all animation, `F` toggles follow-the-signal, `W A S D Q E` fly (hold shift to go faster).
 
@@ -52,7 +53,7 @@ Drawn input goes through the optdigits recipe: fit the ink into a 32x32 bitmap, 
 | `scripts/build_paren_example.py` | Lab example: parentheses transformer + token dataset | ~10 min |
 | `scripts/build_cifar_example.py` | Lab example: CIFAR-10 RGB CNN + 1000 test images | longer (downloads CIFAR) |
 | `scripts/explain_lab.py` | written explanations for any ONNX model, for the Lab | 2 API calls per unit |
-| `npm test` | parity, graph surgery vs onnx Python, fixtures, tokens, utilities, SAE trainer | ~1 min |
+| `npm test` | parity, graph surgery vs onnx Python, fixtures, tokens, utilities, SAE trainer, probes | ~1 min |
 
 `explain.py` follows Bills et al. 2023, adapted to images:
 1. Claude (`claude-opus-5-5`) writes one sentence per unit from its top 12 digits, using the even-indexed held-out half.
@@ -66,6 +67,7 @@ Only units active on at least 5 digits in each half are explained (83 of 306). T
 - **SAE:** keeps 92.9% of the variance in the 32 dense neurons. Accuracy is 93.3% when the reconstruction replaces the neurons, against 95.8% for the original network. 184 features are active on held-out digits.
 - **Neurons vs features:** take the share of a unit's top 12 digits that are the same digit. The median is 0.67 for neurons (n = 19) and 0.83 for SAE features (n = 46). Only 5% of neurons are fully one digit, against 41% of features. Only units active on at least 12 digits are counted, so this is a rough proxy.
 - **Latent space:** 5-nearest-neighbour accuracy is flat across layers (95.8% on raw pixels), because these digits are easy. The between/within class distance ratio does grow with depth: 1.29 at the input pixels, 2.26 at the dense layer and 10.4 at the output.
+- **Probes:** held-out accuracy is 89.9% on raw pixels, 92.8% at Conv 1, 96.4% at Conv 2, 94.9% at Dense and 92.0% on the logits. Most of every bar was already in the pixels. The Conv 1 probe also fits 98.1% of shuffled labels on its training digits, so it is big enough to learn the task itself. The shuffled-weight network still gives 89.9% at Conv 1 and 80.4% at Dense. Adding the dense layer's mass-mean direction at strength 1 turns 52.7% of held-out digits into the target digit, against 1.4% for a random direction of the same length (`scripts/test_probe.mjs`).
 - **Steering:** the requested "1s become 0s" demo exists only as a non-selective lever. SAE feature 251 turns 42 of 45 held-out 1s into 0s, but it also turns 222 of 341 other digits into 0s. The app says so.
 
 ## Honesty rules the UI follows
@@ -110,6 +112,7 @@ What you get for any model:
   - You can download the SAE as JSON and load it again later.
   - **Sweep k** trains quick SAEs at k = 1 to 32 to show the trade-off between sparsity and reconstruction before a full run. On the MNIST CNN's last hidden layer it goes from 82.8% variance explained at k = 1 to 97.2% at k = 16.
 - **Latent space** of any stored layer, or of the SAE's features, as a PCA cloud. It also shows full-space nearest-neighbour accuracy and the spacing ratio.
+- **Probes**: a linear probe on every analysed layer, trained in a Web Worker on a stratified 70/30 split of the dataset items, each with a shuffled-label control. The results appear as a tower of thermometers, and as a thermometer beside each floor of the 3D space. Layers too wide to keep in full (over 16384 values) are probed on per-channel maxima. A steering test adds a layer's mass-mean direction for one class to up to 60 held-out items through the override graph, and compares it with a random direction of the same length. On the MNIST CNN, held-out accuracy is 86.3% on the pixels, 80.0% / 90.0% / 97.3% at the three ReLUs and 97.3% at the output. The pixel probe fits 98.6% of shuffled labels, so that layer's probe can memorise. Steering the last ReLU toward 0 at strength 1 moves 52 of 60 items, against 0 for a random direction.
 - **Glowing incoming edges** for any unit, as in the Tour. They show weight times the activation it multiplies on the current input, per input channel for conv maps, and run from the room below to the selection. A test checks they are exact: summed over all inputs and plus the bias, they reproduce every unit's pre-activation in the MNIST CNN, MNIST MLP and CIFAR CNN.
 - **Trace the answer**: from the predicted output, step down to the strongest positive contributor at each layer (at that channel's most active position), drawn as a path with a light running along it. It is the Lab's version of the Tour's "follow the signal". It shows one chain of large contributions, not the whole computation.
 - **Incoming weights** for any unit, read from the model file. Conv kernels appear one tile per input channel. A dense layer's weights are laid out like the tensor it read: an MLP's first layer shows the 28x28 picture each neuron weighs.

@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "train": "python3 scripts/train.py",
     "check": "node scripts/check_parity.mjs",
-    "test": "node scripts/check_parity.mjs && node scripts/test_lab_engine.mjs && node scripts/test_lab_fixtures.mjs && node scripts/test_lab_tokens.mjs && node scripts/test_lab_utils.mjs && node scripts/test_lab_edges.mjs && node scripts/test_sae_worker.mjs && node scripts/test_sae_crosslang.mjs",
+    "test": "node scripts/check_parity.mjs && node scripts/test_lab_engine.mjs && node scripts/test_lab_fixtures.mjs && node scripts/test_lab_tokens.mjs && node scripts/test_lab_utils.mjs && node scripts/test_lab_edges.mjs && node scripts/test_sae_worker.mjs && node scripts/test_sae_crosslang.mjs && node scripts/test_probe.mjs",
     "examples": "python3 scripts/build_examples.py && python3 scripts/build_paren_example.py && python3 scripts/lab_reference.py && python3 scripts/lab_fixtures.py"
   },
   "dependencies": {

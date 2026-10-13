@@ -8,6 +8,7 @@ import SearchBar from './components/SearchBar.jsx';
 import SteerPanel from './components/SteerPanel.jsx';
 import SaePanel from './components/SaePanel.jsx';
 import { LatentScene, LatentPanel } from './components/Latent.jsx';
+import { ProbeScene, ProbePanel } from './components/Probes.jsx';
 import LabPage from './components/lab/LabPage.jsx';
 import { FeatureVis, Patches, Neighborhood } from './components/SeePanel.jsx';
 import { Adversarial, Occlusion, occlude } from './components/BreakPanel.jsx';
@@ -27,6 +28,7 @@ const CHAPTERS = [
   { n: 6, name: 'Steer it' },
   { n: 7, name: 'Neurons vs features' },
   { n: 8, name: 'Latent space' },
+  { n: 9, name: 'Probes' },
 ];
 
 const INTRO = {
@@ -37,6 +39,7 @@ const INTRO = {
   6: <>Grab a unit, fix its value, and watch the answer change.</>,
   7: <>Swap the 32 dense neurons for 256 sparse features and compare how single-minded each one is.</>,
   8: <>Every digit becomes a point in each layer's space; see where yours lands and who its neighbours are.</>,
+  9: <>Hang a thermometer on every layer: train a straight-line reader on each one and see how much of the digit it can read.</>,
 };
 
 const TAKEAWAY = {
@@ -77,6 +80,11 @@ const TAKEAWAY = {
       A layer's space is where the network does its work, and distances there show which inputs it treats as alike. A 3D picture of that space always hides most of it, so trust the full-space numbers over the picture.
     </>
   ),
+  9: (
+    <>
+      A probe shows what a layer makes readable, not what the network uses. Only the controls give the number meaning, and only an intervention, like steering along the probed direction, tests use.
+    </>
+  ),
 };
 
 const firstSeven = DIGITS[LABELS.indexOf(7)];
@@ -109,6 +117,7 @@ export default function App() {
   const [flyTo, setFlyTo] = useState(null);
   const [latentLayer, setLatentLayer] = useState('dense');
   const [latentAxes, setLatentAxes] = useState(0);
+  const [probeLayer, setProbeLayer] = useState('dense');
   const [highlight, setHighlight] = useState(null);
   const [trail, setTrail] = useState([]);
   const [entered, setEntered] = useState(false); // mount the 3D space the first time it is needed, then keep it
@@ -151,7 +160,7 @@ export default function App() {
     setFlyTo({ ...s, nonce: Math.random() });
   }, []);
   const onSearchPick = useCallback((r) => {
-    if (chapter < 2 || chapter === 8) setChapter(5);
+    if (chapter < 2 || chapter >= 8) setChapter(5);
     openRoom(r.room, f.acts);
   }, [chapter, f, openRoom]);
   const onPreset = useCallback((p, c, i) => {
@@ -163,7 +172,7 @@ export default function App() {
   const onHover = useCallback((h) => setHover(h), []);
   const onFvFrame = useCallback((v) => setFv(v), []);
 
-  useEffect(() => { if (chapter !== 3) setFv(null); if (chapter === 1 || chapter === 8) setFollow(false); }, [chapter]);
+  useEffect(() => { if (chapter !== 3) setFv(null); if (chapter === 1 || chapter >= 8) setFollow(false); }, [chapter]);
 
   useEffect(() => {
     const key = (e) => {
@@ -296,16 +305,16 @@ export default function App() {
             </div>
           )}
           <div className="rounded-lg border border-glow/20 bg-glow/5 p-3 text-xs leading-relaxed text-slate-200">{TAKEAWAY[chapter]}</div>
-          {chapter === 8 && (
+          {chapter === 9 && (
             <div className="rounded-lg border border-line p-3 text-xs text-slate-400">
               <span className="text-[10px] uppercase tracking-[0.2em] text-dim">Coming next</span>
               <p className="mt-1 text-slate-300">Transformers, where each word uses attention to choose which other words to read from.<Cite id="vaswani2017" /></p>
             </div>
           )}
-          {chapter === 8 && (
+          {chapter === 9 && (
             <button onClick={() => setArea('lab')} className="w-full rounded-lg border border-glow/40 bg-glow/5 p-3 text-left text-xs text-slate-200 hover:bg-glow/10">
               <span className="text-[10px] uppercase tracking-[0.2em] text-glow">Your turn</span>
-              <p className="mt-1">Open the Lab to load your own ONNX model, walk through its layers and train a sparse autoencoder on any of them, all in your browser.</p>
+              <p className="mt-1">Open the Lab to load your own ONNX model, walk through its layers, train a sparse autoencoder on any of them and probe every layer, all in your browser.</p>
             </button>
           )}
         </aside>
@@ -317,7 +326,12 @@ export default function App() {
               <LatentScene layer={latentLayer} f={f} highlight={highlight} trail={trail} onPick={(i) => setX(DIGITS[i], 'sample')} axes={latentAxes} />
             </div>
           )}
-          <div className={`absolute inset-0 ${chapter === 8 ? 'invisible' : ''}`}>
+          {chapter === 9 && (
+            <div className="absolute inset-0 z-10">
+              <ProbeScene layer={probeLayer} setLayer={setProbeLayer} />
+            </div>
+          )}
+          <div className={`absolute inset-0 ${chapter >= 8 ? 'invisible' : ''}`}>
           {entered && <Scene
             active={area === 'tour' && chapter > 1 && chapter < 8}
             mode={mode}
@@ -345,6 +359,8 @@ export default function App() {
               </>
             ) : chapter === 8 ? (
               <>Drag to orbit, scroll to zoom, click a numeral to load that digit.</>
+            ) : chapter === 9 ? (
+              <>Each floor is a layer; its tube fills to the probe's held-out accuracy. Click a floor to steer it.</>
             ) : follow ? (
               <>Following the strongest contributions from input to answer. <Kbd>F</Kbd> to stop.</>
             ) : (
@@ -379,6 +395,11 @@ export default function App() {
           {chapter === 8 && (
             <Boundary>
               <LatentPanel layer={latentLayer} setLayer={(l) => { setLatentLayer(l); setLatentAxes(0); }} f={f} highlight={highlight} setHighlight={setHighlight} setX={setX} setTrail={setTrail} axes={latentAxes} setAxes={setLatentAxes} />
+            </Boundary>
+          )}
+          {chapter === 9 && (
+            <Boundary>
+              <ProbePanel layer={probeLayer} setLayer={setProbeLayer} x={xe} />
             </Boundary>
           )}
         </aside>

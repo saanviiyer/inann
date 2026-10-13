@@ -22,6 +22,7 @@ import { occlusionMap, readClassProb, readChannelMax } from '../../lib/lab/occlu
 import { unitEdges, tracePath } from '../../lib/lab/edges.js';
 import { pcaOf, knnAccOf, separationOf, axesOf } from '../../lib/latent.js';
 import { sceneHex } from '../../lib/theme.js';
+import LabProbes from './LabProbes.jsx';
 
 const BASE = import.meta.env.BASE_URL;
 export const EXAMPLES = [
@@ -75,6 +76,7 @@ export default function LabPage() {
   const [hover, setHover] = useState(null);
   const [steer, setSteer] = useState(null);
   const [sae, setSae] = useState(null); // {room, sae, metrics, stats, iv}
+  const [probes, setProbes] = useState(null); // linear probes per layer, tied to one dataset pass (store)
   const [view, setView] = useState('space');
   const [frameNonce, setFrameNonce] = useState(0);
   const [focusRoom, setFocusRoom] = useState(null);
@@ -531,7 +533,7 @@ export default function LabPage() {
 
       <section className="relative order-1 h-[62vh] min-w-0 shrink-0 overflow-hidden lg:order-2 lg:h-auto lg:flex-1 lg:shrink">
         <div className="absolute left-3 top-3 z-20 flex overflow-hidden rounded-md border border-line text-xs">
-          {[['space', '3D space'], ['gallery', 'Gallery'], ['report', 'Report'], ['latent', 'Latent space']].map(([k, t]) => (
+          {[['space', '3D space'], ['gallery', 'Gallery'], ['report', 'Report'], ['latent', 'Latent space'], ['probes', 'Probes']].map(([k, t]) => (
             <button key={k} onClick={() => setView(k)} className={`px-2.5 py-1 ${view === k ? 'bg-glow/15 text-glow' : 'bg-panel text-dim hover:text-slate-200'}`}>{t}</button>
           ))}
         </div>
@@ -540,6 +542,7 @@ export default function LabPage() {
             <LabScene
               rooms={sceneRooms} values={values} scales={scales} inputPixels={kind?.kind === 'image' ? shownPixels : null} inputChannels={kind?.C}
               classes={classes} pred={pred} selected={selected} onSelect={onSelect} onHover={onHover} sae={saeNow} frameNonce={frameNonce} focusRoom={focusRoom} edges={edges} trace={trace}
+              probes={probes?.store === store ? probes : null}
             />
           </Boundary>
         )}
@@ -550,9 +553,14 @@ export default function LabPage() {
           </Boundary>
         )}
         {view === 'report' && <LabReport store={store} rooms={sceneRooms.slice(1)} summaries={summaries} sae={sae} onPick={(e) => setSelected({ room: e.room, index: e.index, sae: e.sae })} />}
+        {view === 'probes' && (
+          <Boundary key={`probes-${model?.fileName}`}>
+            <LabProbes model={model} store={store} rooms={sceneRooms.slice(1)} ds={ds} kind={kind} norm={norm} classes={classes} probes={probes} setProbes={setProbes} />
+          </Boundary>
+        )}
         {view === 'latent' && <LabLatent model={model} store={store} rooms={rooms} sae={sae} outs={outs} ds={ds} setItem={setItem} classes={classes} />}
         <div className="pointer-events-none absolute bottom-3 left-3 rounded bg-black/50 px-2 py-1 text-[11px] text-slate-300">
-          {hover && outs ? <HoverText hover={hover} model={model} outs={outs} saeNow={saeNow} /> : view === 'space' ? 'Drag to orbit, scroll to zoom, click any unit.' : view === 'report' ? 'Every number here is counted from the dataset pass.' : view === 'gallery' ? 'Click a card to open that unit\'s room.' : 'Each mark is one dataset item, placed by PCA of the chosen layer.'}
+          {hover && outs ? <HoverText hover={hover} model={model} outs={outs} saeNow={saeNow} /> : view === 'space' ? 'Drag to orbit, scroll to zoom, click any unit.' : view === 'report' ? 'Every number here is counted from the dataset pass.' : view === 'gallery' ? 'Click a card to open that unit\'s room.' : view === 'probes' ? 'Each floor is a layer; its tube fills to the probe\'s held-out accuracy.' : 'Each mark is one dataset item, placed by PCA of the chosen layer.'}
         </div>
         {summaries.length > 0 && <LabSearch entries={summaries} classes={classes} onPick={(e) => { setView('space'); setSelected({ room: e.room, index: e.index, sae: e.sae }); setFocusRoom({ i: sceneRooms.findIndex((r) => r.name === e.room), sae: e.sae, nonce: Math.random() }); }} />}
         {view === 'space' && sceneRooms.length > 3 && (

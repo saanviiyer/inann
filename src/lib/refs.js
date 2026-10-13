@@ -135,6 +135,31 @@ export const REFS = {
     full: 'G. Alain, Y. Bengio. Understanding intermediate layers using linear classifier probes. arXiv:1610.01644, 2016.',
     url: 'https://arxiv.org/abs/1610.01644',
   },
+  hewitt2019: {
+    short: 'Hewitt & Liang 2019',
+    full: 'J. Hewitt, P. Liang. Designing and Interpreting Probes with Control Tasks. EMNLP, 2019. arXiv:1909.03368.',
+    url: 'https://arxiv.org/abs/1909.03368',
+  },
+  belinkov2022: {
+    short: 'Belinkov 2022',
+    full: 'Y. Belinkov. Probing Classifiers: Promises, Shortcomings, and Advances. Computational Linguistics 48(1), 2022. arXiv:2102.12452.',
+    url: 'https://arxiv.org/abs/2102.12452',
+  },
+  kim2018: {
+    short: 'Kim et al. 2018',
+    full: 'B. Kim, M. Wattenberg, J. Gilmer, C. Cai, J. Wexler, F. Viegas, R. Sayres. Interpretability Beyond Feature Attribution: Quantitative Testing with Concept Activation Vectors (TCAV). ICML, 2018. arXiv:1711.11279.',
+    url: 'https://arxiv.org/abs/1711.11279',
+  },
+  li2023: {
+    short: 'Li et al. 2023',
+    full: 'K. Li, O. Patel, F. Viegas, H. Pfister, M. Wattenberg. Inference-Time Intervention: Eliciting Truthful Answers from a Language Model. NeurIPS, 2023. arXiv:2306.03341.',
+    url: 'https://arxiv.org/abs/2306.03341',
+  },
+  marks2023: {
+    short: 'Marks & Tegmark 2023',
+    full: 'S. Marks, M. Tegmark. The Geometry of Truth: Emergent Linear Structure in Large Language Model Representations of True/False Datasets. arXiv:2310.06824, 2023.',
+    url: 'https://arxiv.org/abs/2310.06824',
+  },
 };
 
 export const REF_ORDER = Object.keys(REFS);
