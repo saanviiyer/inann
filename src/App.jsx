@@ -10,6 +10,7 @@ import SaePanel from './components/SaePanel.jsx';
 import { LatentScene, LatentPanel } from './components/Latent.jsx';
 import { ProbeScene, ProbePanel } from './components/Probes.jsx';
 import LabPage from './components/lab/LabPage.jsx';
+import CoursePage from './components/course/CoursePage.jsx';
 import { FeatureVis, Patches, Neighborhood } from './components/SeePanel.jsx';
 import { Adversarial, Occlusion, occlude } from './components/BreakPanel.jsx';
 import { Term, Cite, NotShown, Btn, Kbd, Sources, Boundary, About } from './components/ui.jsx';
@@ -91,10 +92,22 @@ const firstSeven = DIGITS[LABELS.indexOf(7)];
 
 export default function App() {
   const [chapter, setChapter] = useState(1);
-  const [area, setArea] = useState(() => (typeof location !== 'undefined' && location.hash === '#lab' ? 'lab' : 'tour'));
-  useEffect(() => { try { history.replaceState(null, '', `${location.pathname}${location.search}${area === 'lab' ? '#lab' : ''}`); } catch { /* ignore */ } }, [area]);
+  const areaFromHash = () => {
+    if (typeof location === 'undefined') return 'tour';
+    if (location.hash === '#lab') return 'lab';
+    if (location.hash.startsWith('#course')) return 'course';
+    return 'tour';
+  };
+  const [area, setArea] = useState(areaFromHash);
   useEffect(() => {
-    const onHash = () => setArea(location.hash === '#lab' ? 'lab' : 'tour');
+    // leave a #course/N deep link untouched; only set the bare hash when switching areas
+    try {
+      if (area === 'course' && location.hash.startsWith('#course')) return;
+      history.replaceState(null, '', `${location.pathname}${location.search}${area === 'lab' ? '#lab' : area === 'course' ? '#course' : ''}`);
+    } catch { /* ignore */ }
+  }, [area]);
+  useEffect(() => {
+    const onHash = () => setArea(areaFromHash());
     window.addEventListener('hashchange', onHash);
     return () => window.removeEventListener('hashchange', onHash);
   }, []);
@@ -199,7 +212,7 @@ export default function App() {
           <span className="hidden text-[11px] text-dim sm:inline">in a neural network!</span>
         </button>
         <div className="flex overflow-hidden rounded-md border border-line text-xs">
-          {[['tour', 'Tour'], ['lab', 'Lab: your model']].map(([k, t]) => (
+          {[['tour', 'Tour'], ['course', 'Course'], ['lab', 'Lab: your model']].map(([k, t]) => (
             <button key={k} onClick={() => setArea(k)} className={`px-2.5 py-1 ${area === k ? 'bg-glow/15 text-glow' : 'text-dim hover:text-slate-200'}`}>{t}</button>
           ))}
         </div>
@@ -248,13 +261,14 @@ export default function App() {
       </header>
 
       {area === 'lab' && <LabPage />}
+      {area === 'course' && <CoursePage onGoTour={() => setArea('tour')} />}
       {area === 'tour' && chapter === 1 && (
         <main className="flex-1 overflow-y-auto">
           <Prologue paused={paused} onNext={() => setChapter(2)} />
         </main>
       )}
 
-      <main className={`${chapter === 1 || area === 'lab' ? 'hidden' : 'flex'} min-h-0 flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-hidden`}>
+      <main className={`${area !== 'tour' || chapter === 1 ? 'hidden' : 'flex'} min-h-0 flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-hidden`}>
         {/* left: intro, input, controls, takeaway */}
         <aside className="scroll-thin order-2 w-full shrink-0 space-y-4 border-line p-4 lg:overflow-y-auto lg:order-1 lg:w-80 lg:shrink-0 lg:border-r">
           <div>

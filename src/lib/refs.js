@@ -160,6 +160,11 @@ export const REFS = {
     full: 'S. Marks, M. Tegmark. The Geometry of Truth: Emergent Linear Structure in Large Language Model Representations of True/False Datasets. arXiv:2310.06824, 2023.',
     url: 'https://arxiv.org/abs/2310.06824',
   },
+  abumostafa2012: {
+    short: 'Abu-Mostafa et al. 2012',
+    full: 'Y. S. Abu-Mostafa, M. Magdon-Ismail, H.-T. Lin. Learning From Data. AMLBook, 2012. Caltech CS156 lectures at work.caltech.edu.',
+    url: 'http://work.caltech.edu/telecourse',
+  },
 };
 
 export const REF_ORDER = Object.keys(REFS);
