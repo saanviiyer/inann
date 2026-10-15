@@ -1,7 +1,7 @@
 // Course mode: interactive lessons, one per lecture of Caltech CS156 "Learning From Data".
 // An index of all lectures plus a selected-lesson view, with prev/next and a quick-jump nav.
 import React, { useEffect, useMemo, useState } from 'react';
-import { Cite, Boundary } from '../ui.jsx';
+import { Boundary } from '../ui.jsx';
 import { LESSONS } from './lessons/index.jsx';
 import { Btn, TELECOURSE } from './common.jsx';
 
@@ -62,7 +62,7 @@ export default function CoursePage({ onGoTour }) {
         <div className="mx-auto max-w-3xl space-y-4 px-4 py-5">
           <div>
             <p className="text-xs uppercase tracking-[0.2em] text-dim">
-              course · learning from data (cs156)<Cite id="abumostafa2012" />
+              learning from data (cs156)
             </p>
             <h1 className="mt-1 text-xl font-semibold text-slate-100">lecture {lesson.n}. {lesson.title}</h1>
             <p className="mt-1 text-sm text-slate-400">{lesson.blurb}</p>
