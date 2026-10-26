@@ -195,3 +195,27 @@ A dataset `.json` has the form `{shape, labels?, classes?, data}`. `data` is bas
 - **Inputs:** one driven input, which must be float32 or integer token ids. Other inputs are filled the way Hugging Face exports expect: masks with ones, position ids with 0..T-1, the rest with zeros. Symbolic sizes such as the sequence length can be edited in the model card. A tiny BERT classifier export (305 ops, with `attention_mask`) loads and runs. For BERT-style models, load the model's `vocab.txt` to type sentences. They are word-piece tokenized (uncased, `[CLS]`/`[SEP]`, `##` pieces), and the attention mask then follows the real tokens and zeroes the padding. There is no BPE tokenizer (GPT-style models), so type token ids for those.
 - **Storage:** full activations are kept for at most 40 million values across all rooms, smallest rooms first. Rooms beyond that budget keep only per-channel summaries, so they cannot host an SAE or a latent view; analyse fewer items or choose fewer rooms to make space.
 - **Speed:** everything runs in WebAssembly on one thread. Measured on this development laptop while it was heavily loaded (load average about 90): ResNet-18 at 224x224 took 1.35 s per image and the MNIST CNN 8 ms. Heavy models therefore analyse 100 items by default.
+
+## LLM steering (`/#steer`)
+
+Push a few MLP neurons of a real language model up or down at every token, and compare three completions: unsteered, steered, and random neurons at the same layers and doses. The model runs in a small local server; the page (local or on GitHub Pages) talks to it over `127.0.0.1`.
+
+```
+pip install torch transformers
+python3 steer/server.py --model Qwen/Qwen3.5-4B      # about 9.3 GB in bf16
+python3 steer/server.py --model Qwen/Qwen3-1.7B      # smaller, same MLP layout
+```
+
+Then open the LLM steering tab and press Connect.
+
+**What steering does.** A neuron is coordinate n of the input to layer L's `down_proj`, that is `act(gate(x)) * up(x)`. The value added there is `dose × median‖h_L(t)‖ (t ≥ 1) / ‖W_down[:, n]‖`, where h_L is the residual stream leaving layer L on the prompt. That makes the vector written into the residual stream exactly `|dose| ×` the typical residual length. The default preset is the shared recipe for Qwen3.5-4B: L14 N8949 +1, L13 N7956 −1.
+
+**What the page offers.** A dose sweep (×0 to ×2), a five-prompt set run with the control, per-token activation strips for each steered neuron, and a run log you can download.
+
+**Tests.** `python3 steer/test_steer.py` runs on tiny random Qwen3 and Qwen3.5 models, with nothing downloaded. It checks four things:
+- the added vector's norm is |dose| × the median residual norm;
+- the steered MLP output moves by exactly `value × W_down[:, n]` at every position;
+- the hooks are removed afterwards;
+- the random control keeps layers and doses.
+
+**Why the control matters.** On Qwen3-1.7B at dose ±1, random neurons at the same two layers also turn the output to gibberish: a push that size breaks the model whichever neurons you pick. A steering claim needs the steered column to differ from the control column, not just from the unsteered one.

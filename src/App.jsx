@@ -10,6 +10,7 @@ import SaePanel from './components/SaePanel.jsx';
 import { LatentScene, LatentPanel } from './components/Latent.jsx';
 import { ProbeScene, ProbePanel } from './components/Probes.jsx';
 import LabPage from './components/lab/LabPage.jsx';
+import SteerPage from './components/steer/SteerPage.jsx';
 import CoursePage from './components/course/CoursePage.jsx';
 import { FeatureVis, Patches, Neighborhood } from './components/SeePanel.jsx';
 import { Adversarial, Occlusion, occlude } from './components/BreakPanel.jsx';
@@ -95,6 +96,7 @@ export default function App() {
   const areaFromHash = () => {
     if (typeof location === 'undefined') return 'tour';
     if (location.hash === '#lab') return 'lab';
+    if (location.hash === '#steer') return 'steer';
     if (location.hash.startsWith('#course')) return 'course';
     return 'tour';
   };
@@ -103,7 +105,7 @@ export default function App() {
     // leave a #course/N deep link untouched; only set the bare hash when switching areas
     try {
       if (area === 'course' && location.hash.startsWith('#course')) return;
-      history.replaceState(null, '', `${location.pathname}${location.search}${area === 'lab' ? '#lab' : area === 'course' ? '#course' : ''}`);
+      history.replaceState(null, '', `${location.pathname}${location.search}${area === 'lab' ? '#lab' : area === 'steer' ? '#steer' : area === 'course' ? '#course' : ''}`);
     } catch { /* ignore */ }
   }, [area]);
   useEffect(() => {
@@ -212,7 +214,7 @@ export default function App() {
           <span className="hidden text-[11px] text-dim sm:inline">in a neural network!</span>
         </button>
         <div className="flex overflow-hidden rounded-md border border-line text-xs">
-          {[['tour', 'Tour'], ['course', 'Course'], ['lab', 'Lab: your model']].map(([k, t]) => (
+          {[['tour', 'Tour'], ['course', 'Course'], ['lab', 'Lab: your model'], ['steer', 'LLM steering']].map(([k, t]) => (
             <button key={k} onClick={() => setArea(k)} className={`px-2.5 py-1 ${area === k ? 'bg-glow/15 text-glow' : 'text-dim hover:text-slate-200'}`}>{t}</button>
           ))}
         </div>
@@ -261,6 +263,7 @@ export default function App() {
       </header>
 
       {area === 'lab' && <LabPage />}
+      {area === 'steer' && <SteerPage />}
       {area === 'course' && <CoursePage onGoTour={() => setArea('tour')} />}
       {area === 'tour' && chapter === 1 && (
         <main className="flex-1 overflow-y-auto">
@@ -419,7 +422,7 @@ export default function App() {
         </aside>
       </main>
       <footer className="border-t border-line px-4 py-1.5 text-[10px] text-dim">
-        Feature rooms, test-this-neuron, explanation search and steering follow Neuronpedia<Cite id="lin2023" />; explanations follow Bills et al.<Cite id="bills2023" />. Everything runs in your browser from precomputed files.
+        Feature rooms, test-this-neuron, explanation search and steering follow Neuronpedia<Cite id="lin2023" />; explanations follow Bills et al.<Cite id="bills2023" />. {area === 'steer' ? 'The LLM steering page talks to a model server on your own machine; nothing leaves it.' : 'Everything runs in your browser from precomputed files.'}
       </footer>
       {sources && <Sources onClose={() => setSources(false)} />}
       {about && <About onClose={() => setAbout(false)} />}
