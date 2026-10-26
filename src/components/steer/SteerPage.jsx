@@ -38,7 +38,11 @@ function Connect({ url, setUrl, info, setInfo, err, setErr }) {
   const [busy, setBusy] = useState(false);
   const go = async () => {
     setBusy(true); setErr('');
-    try { setInfo(await call(url, '/info')); } catch (e) { setInfo(null); setErr(`Could not reach ${url}: ${e.message}. Is the server running?`); }
+    try { setInfo(await call(url, '/info')); } catch (e) {
+      setInfo(null);
+      const remote = typeof location !== 'undefined' && location.protocol === 'https:';
+      setErr(`Could not reach ${url}: ${e.message}. Is the server running?${remote ? ' This page is served over https, and browsers may block it from calling a server on your own machine: in Chrome, allow "local network access" if it asks; Safari does not allow it. Running inann locally (npm run dev, then http://localhost:5179/#steer) always works.' : ''}`);
+    }
     setBusy(false);
   };
   useEffect(() => { go(); }, []); // eslint-disable-line
